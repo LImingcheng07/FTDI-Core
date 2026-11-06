@@ -1,0 +1,72 @@
+{
+  "experiment": "FTDI-Core-v0.2",
+  "input": "User-supplied BTCUSDT archive, historical, not live",
+  "archive_sha256": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+  "producer_source": "verified v0.1 replay outbox copies",
+  "cases": {
+    "historical_first_50000": {
+      "delivery": {
+        "batches": 196,
+        "events_sent": 50000,
+        "acknowledged": 50000,
+        "remote_duplicates": 0,
+        "lanes": {
+          "BTC": 50000
+        },
+        "wall_seconds": 4.0383
+      },
+      "audit_status": "COMPLETE",
+      "audit_passed": true,
+      "audit_metrics": {
+        "producer_outbox": 50000,
+        "producer_acked": 50000,
+        "consumer_effects": 50000,
+        "matched_effects": 50000,
+        "remote_missing": 0,
+        "remote_committed_unacked": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "invalid_consumer_rows": 0,
+        "invalid_producer_rows": 0,
+        "producer_receipt_inconsistencies": 0,
+        "archived_records_unsupported": 0
+      },
+      "issues": []
+    },
+    "historical_full_554441": {
+      "delivery": {
+        "batches": 1083,
+        "events_sent": 554441,
+        "acknowledged": 554441,
+        "remote_duplicates": 0,
+        "lanes": {
+          "BTC": 554441
+        },
+        "wall_seconds": 58.9752
+      },
+      "audit_status": "COMPLETE",
+      "audit_passed": true,
+      "audit_metrics": {
+        "producer_outbox": 554441,
+        "producer_acked": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "remote_committed_unacked": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "invalid_consumer_rows": 0,
+        "invalid_producer_rows": 0,
+        "producer_receipt_inconsistencies": 0,
+        "archived_records_unsupported": 0
+      },
+      "issues": []
+    }
+  },
+  "limitations": [
+    "Localhost only, no real-time stream",
+    "Two independent databases but not cross-host exactly-once",
+    "No archive-aware audit of deleted prefixes",
+    "Time is delivery phase, not exchange latency"
+  ]
+}

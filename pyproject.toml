@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftdi-core-research"
+version = "0.2.0"
+description = "FTDI audit-first local research core; no trading"
+requires-python = ">=3.10"
+license = {text = "Research prototype; internal evaluation only"}
+
+[tool.setuptools.packages.find]
+include = ["ftdi_core*"]

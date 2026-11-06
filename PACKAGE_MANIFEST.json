@@ -1,0 +1,221 @@
+{
+  "release": "FTDI-Core-v0.2-Windows-ready-hotfix",
+  "source_data_included": false,
+  "source_zip_sha256_expected_when_user_supplies_archival_fixture": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bc8a641ce90e3c9",
+  "files": {
+    ".gitignore": {
+      "bytes": 203,
+      "sha256": "c94cd5183ba2aea12e49daf35f8223a5a4a21c51756eba470258ed58819acdd0"
+    },
+    "README.md": {
+      "bytes": 5545,
+      "sha256": "387cddcfa561988c952c7d027c8533e9853fcfafc4561b5686b3311260ce93fd"
+    },
+    "WINDOWS_READY_FIX.md": {
+      "bytes": 2158,
+      "sha256": "2963c47f2718eef10f7ec2c17835a3db3a5911e7a6814da918e9c38c3feffa23"
+    },
+    "docs/ADRS.md": {
+      "bytes": 3515,
+      "sha256": "f29f984af1cbd9154b8eeb25f116dcd77cdac8d86a19b998433521156b4eef69"
+    },
+    "docs/ARCHITECTURE_V1.md": {
+      "bytes": 7796,
+      "sha256": "f17ddf089e5ac311a566bc5d097a447bfefb4c7cd03edf3bfb41fe02da420e63"
+    },
+    "docs/ARCHITECTURE_V1_1.md": {
+      "bytes": 4722,
+      "sha256": "d312acf9779c542a621982e0243899cf15be64a46e98ca6cd1b7fe8894dd87d8"
+    },
+    "docs/DATA_CONTRACT_V1.md": {
+      "bytes": 3613,
+      "sha256": "3df1bf6eef08b94658f8adea38d9b23a6a07dba6deaf8b7faba315cf8852be08"
+    },
+    "docs/FAILURE_MATRIX.md": {
+      "bytes": 2632,
+      "sha256": "449dc55e6f9ac9f0e0a1263f6139037bb52026be1141525f6b1a7b7c05ad3004"
+    },
+    "docs/MIGRATION_PLAN.md": {
+      "bytes": 2242,
+      "sha256": "59fe638daabd1917b7017f82aa95ab6ae7a0e691673c725e6d41f95a0ebdc95e"
+    },
+    "docs/REAL_E2E_RESULTS.md": {
+      "bytes": 3350,
+      "sha256": "8ef316ad3eda931b58463edb086910e5afd467f810bb7b0dcac46beb47f8c5b8"
+    },
+    "docs/RELEASE_GATES.md": {
+      "bytes": 1814,
+      "sha256": "18474eff1313cda2d2eadac8a79d5befb54ddb54119302d486fdbc0b7628f464"
+    },
+    "docs/RELEASE_GATES_V02.md": {
+      "bytes": 1210,
+      "sha256": "f8210ed01cccbbad9360a8a91985cf73a28663af59f90997c07d14a386abf716"
+    },
+    "docs/TEST_REPORT.md": {
+      "bytes": 2260,
+      "sha256": "9a39b992b05942565facba41d5e7f9ad4817d1e9b6cf5469e4e5120e988c49eb"
+    },
+    "docs/TEST_REPORT_V02.md": {
+      "bytes": 1204,
+      "sha256": "20f573656b576fd78bcd6ea0c6d5706d9edf6d52d1f335ed4a7519169a46e129"
+    },
+    "examples/REAL_E2E_EVIDENCE.json": {
+      "bytes": 2147,
+      "sha256": "5162a79ab44d9f795272312230454cb2d9c4c170ee3459383fc3eeb60e3927d4"
+    },
+    "examples/REAL_HISTORY_EVIDENCE.json": {
+      "bytes": 1697,
+      "sha256": "4d2ab8577e20978f9ac3de8471e5e3ab8bf690495ce0e95a7d5a234aa7ec7fdc"
+    },
+    "ftdi_core/__init__.py": {
+      "bytes": 64,
+      "sha256": "477d1098be4709612c4f52ae2533d950724aa80fccafdcbd26e745895a0ab159"
+    },
+    "ftdi_core/__main__.py": {
+      "bytes": 79,
+      "sha256": "bd045ddd5242d002f692dac452be9afba38deef5cde541a5fc074bfef5987b91"
+    },
+    "ftdi_core/adapters/__init__.py": {
+      "bytes": 64,
+      "sha256": "45fe4848e74c86ba7e150c15b1c716595ff4f88f97611bfabdbaf7858c40cf56"
+    },
+    "ftdi_core/adapters/s070041/__init__.py": {
+      "bytes": 64,
+      "sha256": "45fe4848e74c86ba7e150c15b1c716595ff4f88f97611bfabdbaf7858c40cf56"
+    },
+    "ftdi_core/adapters/s070041/consumer_service.py": {
+      "bytes": 3602,
+      "sha256": "97ed977b6ed7f05e2242bd9088411f42f90dfbe66e595ed615d3b70db7c28d6c"
+    },
+    "ftdi_core/adapters/s070041/durable_stream.py": {
+      "bytes": 18789,
+      "sha256": "b5f7ca3c5b0e80d7ac970c4c3b7c2c44cb1291663e196f7ef4bfe64141a246f7"
+    },
+    "ftdi_core/adapters/s070041/external_delivery.py": {
+      "bytes": 4898,
+      "sha256": "06ecde56f0ee95a8dbe7cc5f55ff4037895917262dcf5ff1f14181bf6121bd3d"
+    },
+    "ftdi_core/adapters/s070041/multi_lane.py": {
+      "bytes": 7386,
+      "sha256": "2129e0133a398b706900a67e48b1397771b1622e5a83f0e383e8d3666a0fd3af"
+    },
+    "ftdi_core/adapters/s070041/outbox_publisher.py": {
+      "bytes": 4184,
+      "sha256": "9719185b0423e529a3bb6574c0317b5739adce53c36e7282316612d4858fcc86"
+    },
+    "ftdi_core/adapters/s070041/retention.py": {
+      "bytes": 14227,
+      "sha256": "21ca4dfd1aa73741c26770b70313c0a4e7150fe99b94b4e82c7d3717efbef0a9"
+    },
+    "ftdi_core/audit.py": {
+      "bytes": 2030,
+      "sha256": "a2201ba2a81fde54d5d665780a32d63d9d09992a5a0e5b96e0295bd7cf1c9a41"
+    },
+    "ftdi_core/cli.py": {
+      "bytes": 3367,
+      "sha256": "59130946e3f2ada2fab274925f08c8769f98ac61113789c3b9fbb2e6078f83aa"
+    },
+    "ftdi_core/contracts.py": {
+      "bytes": 3663,
+      "sha256": "f5788165186ce37999d952591a1a1f8a1f902425af61e0f0c392e5a1dab9e7f4"
+    },
+    "ftdi_core/delivery.py": {
+      "bytes": 4377,
+      "sha256": "4e6678f86bc7aec53f60d71ea51efa012e25e538bed35b430b3910e06e521977"
+    },
+    "ftdi_core/e2e.py": {
+      "bytes": 8834,
+      "sha256": "1c6b106aa427fc7fba59e483534d0efca00c214ab396385e1189bbc370198eba"
+    },
+    "ftdi_core/preparation.py": {
+      "bytes": 8502,
+      "sha256": "7535360228707d85a03159655370b40dada2202f35f0b7eb0dde929c54b53a73"
+    },
+    "ftdi_core/service.py": {
+      "bytes": 1349,
+      "sha256": "f8ab71bf93870c45f228628ab91b15135af649ae888e7e4c8a6468d84092bb0f"
+    },
+    "pyproject.toml": {
+      "bytes": 358,
+      "sha256": "cf493f5ccfac935b3c3efe10ef8fbe311002662828b6139e3f6c1b5b7cca80ba"
+    },
+    "reference_s07_0041/consumer_service.py": {
+      "bytes": 3601,
+      "sha256": "987f43a7d086ee56df46a75b8a21926173905e418162213d854d2785c69ef7e4"
+    },
+    "reference_s07_0041/durable_stream.py": {
+      "bytes": 18789,
+      "sha256": "b5f7ca3c5b0e80d7ac970c4c3b7c2c44cb1291663e196f7ef4bfe64141a246f7"
+    },
+    "reference_s07_0041/external_delivery.py": {
+      "bytes": 4897,
+      "sha256": "3b8e20b5e0a80bf9f0b818a0547d11cd4cd89a3b5cf8f146e9de6a116cd2f4a5"
+    },
+    "reference_s07_0041/multi_lane.py": {
+      "bytes": 7385,
+      "sha256": "8c3736b53c03dc6c1c4b2cd790fe7fca65c578612b145147d27d829f08f60300"
+    },
+    "reference_s07_0041/outbox_publisher.py": {
+      "bytes": 4183,
+      "sha256": "8d7426b89c64125a77e5bcd364af7f6ca714b5e2d9145dc542c7e4c13b387cc1"
+    },
+    "reference_s07_0041/retention.py": {
+      "bytes": 14223,
+      "sha256": "7157cd54dce74424a4e43549962aed1edff6db3e8090106664f26859a5b73848"
+    },
+    "reference_s07_0041/run_lab.py": {
+      "bytes": 4323,
+      "sha256": "b7c270f1625d927ebd1cf4f7d181b07dd199bcc103333c7aefca49e785d4280e"
+    },
+    "reference_s07_0041/run_stream.py": {
+      "bytes": 8665,
+      "sha256": "94e523262ef2db92dc12e385a0ddd27c2ac362fcaf6e9910db99590c66caa3e7"
+    },
+    "reference_s07_0041/run_stream_s07004.py": {
+      "bytes": 8665,
+      "sha256": "94e523262ef2db92dc12e385a0ddd27c2ac362fcaf6e9910db99590c66caa3e7"
+    },
+    "reference_s07_0041/tests/test_s070041.py": {
+      "bytes": 14044,
+      "sha256": "153f0b9bfcb73a2402a7d43a0e66a20719db3c476415d760dd3d3f11c54efc79"
+    },
+    "reference_s07_0041/tests/test_s07004_base.py": {
+      "bytes": 14041,
+      "sha256": "1e93955c3eeef43a334d611fe37e7191f9d83db4fab43837886417d58a514776"
+    },
+    "scripts/build_release.py": {
+      "bytes": 1975,
+      "sha256": "222aa3e265d26e230f025eadff0b15d92f8b9debc049db02ad7835c91f055ad6"
+    },
+    "scripts/windows_real_50k.ps1": {
+      "bytes": 1098,
+      "sha256": "b934dc816496503303d05cc24044cb3ae5b397a66f688f0c5ceb06daa2012cc1"
+    },
+    "scripts/windows_tests_only.ps1": {
+      "bytes": 497,
+      "sha256": "04ea233b42a1ad7ecf3cf8d4debc0f0d3abb2324d31d102245224328ec33f4bd"
+    },
+    "tests/test_cli.py": {
+      "bytes": 1788,
+      "sha256": "16ca3353d5b5fd1e15f53d14aefd07cde2187e952fa0122667c8b49b94cd41ab"
+    },
+    "tests/test_contracts.py": {
+      "bytes": 2714,
+      "sha256": "6e01731a06a9ab872e72a084c2bc2eb879bca517ccd4722557dcba3b7b13517f"
+    },
+    "tests/test_e2e.py": {
+      "bytes": 12349,
+      "sha256": "497bdade2b9e3e8fcf29c56e308c3f71ff58cc1a16af746165efd2b6426febca"
+    },
+    "tests/test_preparation.py": {
+      "bytes": 5556,
+      "sha256": "469131a6dca645044e46ddaab5e87501f35f3acbceeded750606fca6383f051d"
+    },
+    "tests/test_service.py": {
+      "bytes": 5738,
+      "sha256": "c858824fa601d48c4dcc6864a51b1fcfd389d88cb80de407542d06bee3baccc4"
+    }
+  },
+  "devkit_note": "Git ignore patterns updated for safer local development; application code unchanged.",
+  "patch_id": "consumer-ready-atomic-2026-11-06"
+}

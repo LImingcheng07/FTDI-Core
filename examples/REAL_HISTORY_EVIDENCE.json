@@ -1,0 +1,49 @@
+{
+  "project": "FTDI-Core-v0.1",
+  "date": "2026-11-06",
+  "input": "user-supplied historical BTCUSDT aggTrades ZIP",
+  "original_zip_sha256": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+  "uploaded_companion_checksum_matched": true,
+  "normalization_schema": "FTDI-CSV-AGGTRADES-v1",
+  "preserves_eighth_is_best_match": true,
+  "tests": {
+    "core_new": 47,
+    "core_new_passed": 47,
+    "legacy_s07_0041": 45,
+    "legacy_passed": 45,
+    "windows_native_tested": false
+  },
+  "real_50k": {
+    "input_records": 50000,
+    "normalized_jsonl_sha256": "e1a8b765cf0ad74f36774303fc4fa140f8452dfa8963fff38afa277ad09fc013",
+    "canonical_events_sha256": "f876556c352c185635d866d3fd65d57c044f55bc0f2d62573caedb0ed927206e",
+    "source_gaps": 0,
+    "source_ack": 50000,
+    "outbox_total": 50000,
+    "outbox_acked_by_external_consumer": 0,
+    "pending": 0,
+    "audit_passed": true
+  },
+  "real_full_day": {
+    "input_records": 554441,
+    "first_seq": 3023902824,
+    "last_seq": 3024457264,
+    "source_gaps": 0,
+    "normalized_jsonl_sha256": "1f157174bc3555276e596074c13e34b6fb11b8fa8f557654a3c88ec2c56fdb0a",
+    "canonical_events_sha256": "c47af609dca14787ee9212f29eba978382aa41b0c00a8ff6f1a922fe44aea538",
+    "source_ack": 554441,
+    "outbox_total": 554441,
+    "outbox_acked_by_external_consumer": 0,
+    "pending": 0,
+    "audit_passed": true,
+    "repeat_outbox_unchanged": true,
+    "repeat_source_ack_unchanged": true
+  },
+  "limitations": [
+    "No live network test in Core-v0.1",
+    "No independent consumer run for the new Core historical replay",
+    "No trusted one-way latency",
+    "No Windows-native test this turn",
+    "No power-loss test"
+  ]
+}
