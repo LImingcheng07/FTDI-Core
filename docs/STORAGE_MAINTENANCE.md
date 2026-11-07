@@ -56,35 +56,47 @@ WAL with a normal connection (logical content unchanged). Output fields:
 
 ## Apply
 
-Precondition (documented, as for every maintenance command): an exclusive maintenance window — no other process
-has the database open. On Windows an open handle makes the final rename fail, which is reported as a refusal.
+`vacuum-db` holds an **exclusive SQLite lock for the whole operation** (`locking_mode=EXCLUSIVE`): if any other
+connection of any process has the database open, even idle, the command is refused (`database in use`), and
+while it runs nobody else can read or write the database. The original file is changed only by SQLite's own
+transactional `VACUUM`, after a byte copy of it has been made **and verified**.
 
-Steps, in this order; any failure stops with exit 3 and leaves the database at `PATH` with identical logical
-content (byte-identical if it had no WAL frames before the command; step 1 folds WAL frames into the file):
+Steps, in this order. A refusal before step 5 leaves the database at `PATH` with identical logical content
+(byte-identical if it had no WAL frames; step 3 folds WAL frames into the file) and removes only the copy this
+run created:
 
-1. Checkpoint the WAL into the main file (`wal_checkpoint(TRUNCATE)`); if another connection prevents a complete
-   checkpoint → refused (`database in use`). Not enough free space (see `space_needed_bytes`) → refused.
-2. Compute the logical digest and a content fingerprint of `PATH` (and `PATH-wal` if present).
-3. `VACUUM INTO` a new temporary file in the same directory.
-4. Verify the new file: `PRAGMA integrity_check` is `ok`; identical logical digest; identical `user_version`
-   and `application_id`; the journal mode is restored to WAL if the original used WAL.
-5. Re-check the fingerprint of `PATH`: any change since step 2 → refused (`changed during vacuum`), the temporary
-   file is removed (it is the tool's own scratch file), the original is untouched.
-6. Swap: rename `PATH` → `PATH.pre-vacuum-<UTC yyyymmddTHHMMSSZ>` (the **kept original**), move its `-wal`/`-shm`
-   sidecars along with it, rename the new file → `PATH`. If any rename fails, every completed rename is undone so
-   that `PATH` is the original again; the error says so.
-7. Verify `PATH` again (read-only): logical digest identical to step 2.
+1. Path checks: a regular file, not a link, not reached through a link or junction (its real path equals the
+   given path), exactly one hard link; `PATH-journal` absent; `PATH-wal` / `PATH-shm`, when present, regular
+   files with one hard link each that are not the database itself, and a non-empty `PATH-wal` must start with
+   the SQLite WAL magic. Otherwise refused before any SQLite open.
+2. Open `PATH`, take the exclusive lock (refused if impossible), check the database kind, compute the logical
+   digest.
+3. Fold the WAL into the file (`wal_checkpoint(TRUNCATE)`); check free space: in the directory for one copy of
+   the file plus the VACUUM working space (one compacted copy), and for SQLite's temporary database in the
+   system temp directory (one compacted copy; added to the directory requirement when both are on one device).
+4. Create `PATH.pre-vacuum-<UTC yyyymmddTHHMMSSZ>` exclusively (an existing name is never overwritten), copy the
+   file into it, fsync, re-read both files and compare SHA-256, and verify that the copy's logical digest equals
+   step 2. Any difference → refused, the copy removed.
+5. `VACUUM` in place, fold its WAL, `PRAGMA integrity_check` must be `ok`, `user_version`, `application_id`,
+   `page_size`, `auto_vacuum` unchanged, logical digest equal to step 2.
+6. Release the lock.
+
+If step 5 fails, the error names the verified copy; `PATH` is a consistent SQLite database because VACUUM is
+transactional. Nothing is restored automatically.
 
 Success output: `status: "VACUUMED"`, `kind`, `db`, `bytes_before`, `bytes_after` (file sizes),
-`logical_digest` (unchanged), `kept_original` (path of the kept original), `changed: true`, and a `note` that
-the kept original is never deleted by FTDI.
+`logical_digest` (unchanged), `kept_original` (path of the verified copy), `changed: true`, and a `note` that the
+kept copy is never deleted by FTDI. Command-line usage errors (missing `--db`) exit 2 (argparse).
 
 ## Logical digest
 
-SHA-256 over, in order: every `sqlite_master` row `(type, name, tbl_name, sql)` sorted by `(type, name)`
-(automatic indexes included; `sqlite_sequence` included as a table), then for every table in name order its
-name and all rows ordered by all columns, each row encoded canonically with SQLite type tags. Independent of
-page layout and rowid assignment; any changed, added or removed row, table, index, view or trigger changes it.
+SHA-256 (domain `FTDI-logical-digest-v2`) over self-delimiting records of four kinds: every `sqlite_master` row
+`(type, name, tbl_name, sql)` of the main schema sorted by `(type, name)` (automatic indexes and
+`sqlite_sequence` included), then per table in name order a header (name, column count), every row ordered by
+`typeof(c), c COLLATE BINARY` for all columns, and an end record with the row count. Values are type-tagged
+(NULL, INTEGER, REAL as exact hex, TEXT and BLOB length-prefixed). Independent of page layout and rowids; any
+changed, added, removed or moved row, table, index, view or trigger changes it. The only residual ordering tie
+(REAL `0.0` vs `-0.0`) can make equal databases look different (refusal), never the reverse.
 
 ## Guarantees the tests must be able to observe
 
@@ -95,6 +107,8 @@ page layout and rowid assignment; any changed, added or removed row, table, inde
   `audit-e2e-archive` gives the same status as before, a tier-aware consumer still answers replays as duplicates,
   the insert-guard trigger still blocks writes into compacted ranges, a producer replay resumes without new rows.
 * Never: a state in which `PATH` is missing or contains different logical content; deletion of any file other
-  than the tool's own temporary file; changes to archives, sources, registry or other databases.
-* Refusals: non-FTDI database, missing file, directory, rollback journal present, database in use, insufficient
-  space, concurrent change, name collision of the temporary or kept file.
+  than a copy this run created and can prove is its own (same file identity); writes through links or
+  hard-linked sidecars; changes to archives, sources, registry or other databases.
+* Refusals: non-FTDI database, missing file, directory, link/junction/hard link, foreign or hard-linked
+  sidecar, invalid WAL file, rollback journal present, database open elsewhere (even idle), insufficient space,
+  name collision of the kept copy (also when the name appears during the run), backup copy not identical.

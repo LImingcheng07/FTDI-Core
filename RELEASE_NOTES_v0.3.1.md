@@ -12,12 +12,17 @@ python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3 --apply    #
 ```
 
 Retention deletes rows but SQLite only reuses the freed pages, so a compacted consumer DB stayed at its full
-size. `vacuum-db` rebuilds one producer lane DB or consumer DB with `VACUUM INTO`, proves that the rebuilt file
-has exactly the same logical content (schema, indexes, triggers and every row of every table — a
-layout-independent digest), checks integrity, and swaps it in by renames that are undone on any failure. **The
-original file is never deleted**: it is kept as `<db>.pre-vacuum-<UTC timestamp>`; the owner removes it after
-verifying. Refused when the database is in use, a rollback journal is present, space is insufficient, the file is
-not an FTDI database, or it changed during the rebuild. Contract: `docs/STORAGE_MAINTENANCE.md`.
+size. `vacuum-db` holds an exclusive SQLite lock for the whole operation (any other open connection, even idle, is
+a refusal), makes a byte copy `<db>.pre-vacuum-<UTC timestamp>` and verifies it (SHA-256 re-read and the logical
+digest: schema, indexes, triggers and every row of every table), and only then runs SQLite's transactional
+`VACUUM` in place and re-verifies integrity, settings and the digest. The database path never disappears; **the
+copy is never deleted by FTDI** — the owner removes it after verifying. Links, junctions, hard links and foreign
+sidecar files are refused before any write. Contract: `docs/STORAGE_MAINTENANCE.md`.
+
+An independent review of a first rename-based design (9 findings, incl. one critical: a checkpoint through a
+hard-linked `-wal` could truncate the only original) led to this in-place design. The rename windows (path
+missing, late commit lost, foreign temp file deleted) no longer exist by construction; the other findings have
+regression tests that fail on the first design (mutation-checked).
 
 ## Changed
 
@@ -28,7 +33,7 @@ not an FTDI database, or it changed during the rebuild. Contract: `docs/STORAGE_
 
 No schema, contract or format change. v0.3.0 data are used as-is; a vacuumed database is an ordinary SQLite file
 with identical content (rowids of tables without an INTEGER PRIMARY KEY may be renumbered; FTDI does not use them).
-Rollback: rename the kept original back to the database name.
+Rollback: stop all programs using the database and copy the kept file back over it.
 
 ## Verification
 
