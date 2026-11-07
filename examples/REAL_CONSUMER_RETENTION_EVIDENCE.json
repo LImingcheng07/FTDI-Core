@@ -1,0 +1,230 @@
+{
+  "schema": "FTDI-Core-Real-Consumer-Retention-Evidence-v1",
+  "task": "Task 002 phase 1 (consumer retention v2), gate T2-5 on generated copies",
+  "environment": "native Windows 11 Pro 10.0.26300, Python 3.11.9, SQLite 3.45.1, work dir on the NVMe SSD (C:)",
+  "code": "commit cb8c519 (after the six review fixes)",
+  "input": {
+    "archive_name": "BTCUSDT-aggTrades-2024-06-01.zip",
+    "read_only": true,
+    "zip_sha256_before": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+    "zip_sha256_after": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+    "zip_unchanged": true
+  },
+  "started": "2026-11-07 15:51:38",
+  "finished": "2026-11-07 16:07:36",
+  "result": "OK",
+  "steps": [
+    {
+      "step": "prepare full day",
+      "rc": 0,
+      "wall_s": 9.87
+    },
+    {
+      "step": "replay",
+      "rc": 0,
+      "wall_s": 34.57,
+      "complete": true
+    },
+    {
+      "step": "lab-e2e on NVMe (Core tier-aware consumer)",
+      "rc": 0,
+      "wall_s": 110.45,
+      "pass": true,
+      "audit_mode": "RESIDENT",
+      "delivery": {
+        "events_sent": 554441,
+        "acknowledged": 554441,
+        "remote_duplicates": 0,
+        "batches": 542,
+        "wall_seconds": 54.9637
+      },
+      "audit_status": "COMPLETE"
+    },
+    {
+      "step": "producer S07 prune 500,000",
+      "wall_s": 39.98
+    },
+    {
+      "step": "audit-e2e-archive: producer archived, consumer v1",
+      "rc": 0,
+      "wall_s": 79.54,
+      "status": "COMPLETE",
+      "issue_counts": {},
+      "metrics": {
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "source_lines_anchored": 554441,
+        "consumer_compacted_effects": 0,
+        "consumer_segments_parsed": 0
+      }
+    },
+    {
+      "step": "plan-consumer-retention",
+      "rc": 0,
+      "wall_s": 0.77,
+      "status": "PLANNED",
+      "plan": [
+        {
+          "first_seq": 3023902824,
+          "max_seq": 3024457264,
+          "proposed_content_watermark": 3024457264,
+          "rows_at_or_below_watermark": 554441
+        }
+      ]
+    },
+    {
+      "step": "migrate dry run",
+      "rc": 0,
+      "wall_s": 0.16,
+      "status": "DRY_RUN"
+    },
+    {
+      "step": "migrate apply",
+      "rc": 0,
+      "wall_s": 0.32,
+      "status": "MIGRATED"
+    },
+    {
+      "step": "compact dry run",
+      "rc": 0,
+      "wall_s": 46.24,
+      "status": "DRY_RUN",
+      "rows": 500000,
+      "content_watermark": 3024402823,
+      "segments": 25
+    },
+    {
+      "step": "compact apply (500,000 effects, 25 segments)",
+      "rc": 0,
+      "wall_s": 133.66,
+      "status": "COMPACTED",
+      "rows": 500000,
+      "content_watermark": 3024402823,
+      "segments": 25
+    },
+    {
+      "step": "audit-e2e-archive: producer AND consumer compacted",
+      "rc": 0,
+      "wall_s": 85.76,
+      "status": "COMPLETE",
+      "issue_counts": {},
+      "metrics": {
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "source_lines_anchored": 554441,
+        "consumer_compacted_effects": 500000,
+        "consumer_segments_parsed": 25
+      }
+    },
+    {
+      "step": "replay into a NEW producer run (same source)",
+      "rc": 0,
+      "wall_s": 33.94,
+      "complete": true
+    },
+    {
+      "step": "lab-e2e: restarted producer resends all 554,441",
+      "rc": 0,
+      "wall_s": 117.59,
+      "pass": true,
+      "audit_mode": "ARCHIVE_AWARE",
+      "delivery": {
+        "events_sent": 554441,
+        "acknowledged": 554441,
+        "remote_duplicates": 554441,
+        "batches": 542,
+        "wall_seconds": 38.496
+      },
+      "audit_status": "COMPLETE"
+    },
+    {
+      "step": "tamper: one bit flipped in a consumer segment",
+      "rc": 2,
+      "wall_s": 83.58,
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "CONSUMER_SEGMENT_SHA256_MISMATCH": 1
+      },
+      "metrics": {
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "source_lines_anchored": 554441,
+        "consumer_compacted_effects": 500000,
+        "consumer_segments_parsed": 24
+      }
+    },
+    {
+      "step": "rehydrate dry run",
+      "rc": 0,
+      "wall_s": 22.54,
+      "status": "DRY_RUN",
+      "content_watermark": 3024402823,
+      "segments": 25
+    },
+    {
+      "step": "rehydrate apply",
+      "rc": 0,
+      "wall_s": 76.32,
+      "status": "REHYDRATED",
+      "segments": 25
+    },
+    {
+      "step": "audit-e2e-archive: rehydrated copy vs restarted producer",
+      "rc": 0,
+      "wall_s": 69.78,
+      "status": "COMPLETE",
+      "issue_counts": {
+        "UNREFERENCED_CONSUMER_SEGMENT_FILE": 25
+      },
+      "metrics": {
+        "archived_events_matched": 0,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "source_lines_anchored": 554441,
+        "consumer_compacted_effects": 0,
+        "consumer_segments_parsed": 0
+      }
+    }
+  ],
+  "consumer_before": {
+    "rows": 554441,
+    "content_sha256": "07cec77cb7ac0761a8e85790cf7f88e515595efb763f18913b23b65a011a2574",
+    "db_mib": 397.3
+  },
+  "consumer_after_compaction": {
+    "db_mib_before_vacuum": 404.6,
+    "archive_mib": 50.8,
+    "segments": 25,
+    "hot_rows": 54441,
+    "db_mib_after_vacuum_copy": 60.9
+  },
+  "restart_replay": {
+    "hot_rows_before": 54441,
+    "hot_rows_after": 54441
+  },
+  "legacy_adapter_replay": "blocked by trigger: FTDI: insert into a compacted range",
+  "rehydrate": {
+    "rows": 554441,
+    "content_sha256": "07cec77cb7ac0761a8e85790cf7f88e515595efb763f18913b23b65a011a2574",
+    "identical_to_pre_compaction": true
+  },
+  "limits": [
+    "generated copies only; the owner's own consumer data was not compacted",
+    "local evidence consistency; not production certified"
+  ]
+}
