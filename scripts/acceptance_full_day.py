@@ -53,6 +53,8 @@ def run(label, args, expect=0):
                     'would_archive', 'receipts', 'stopped'):
             if key in out:
                 step[key] = out[key]
+        if isinstance(out.get('pre_audit'), dict):
+            step['pre_audit'] = out['pre_audit']['status']
         if 'issue_counts' in out:
             step['issue_counts'] = {k: v for k, v in out['issue_counts'].items() if k != 'SOURCE_MANIFEST_ABSENT'}
         if 'metrics' in out:

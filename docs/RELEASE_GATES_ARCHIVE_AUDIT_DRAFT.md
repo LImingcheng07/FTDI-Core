@@ -1,6 +1,6 @@
 # FTDI-Core archive-aware audit — release gates (DRAFT for the next minor release)
 
-Status: **DRAFT. Development candidate on top of v0.2.0; not a release, not production certified.**
+Status: **Superseded by `docs/RELEASE_GATES_V03.md` (v0.3.0, 2026-11-07); kept as the Task 001 gate record. Not production certified.**
 Scope: `audit-e2e-archive` (`docs/ARCHIVE_E2E_AUDIT.md`, ADR-006). The v0.2 gates in
 `RELEASE_GATES_V02.md` continue to apply unchanged.
 
@@ -17,7 +17,7 @@ Scope: `audit-e2e-archive` (`docs/ARCHIVE_E2E_AUDIT.md`, ADR-006). The v0.2 gate
 | A9 | Windows handle hygiene on success, failure and exception paths | `rmtree` immediately after audits; ResourceWarning as error | PASS on native Windows |
 | A10 | Independent verification | 48 black-box tests written from the contract by a separate agent (Codex) without reading the implementation; separate adversarial review found C1–C8, all fixed with regression tests and mutation-checked | PASS (see TEST_REPORT_TASK001.md) |
 | A11 | Real-data scale run: full-day 554,441 events archived and audited `COMPLETE`, plus deliberate corruption runs `INCONSISTENT` | owner's original ZIP (read-only, SHA unchanged): 500,000 archived + 54,441 resident COMPLETE in 81 s / 37 MiB; bit flip and relabel forgery INCONSISTENT; relocation needs the flag (`docs/REAL_ARCHIVE_AUDIT_RESULTS.md`) | PASS (2026-11-07, native Windows) |
-| A12 | Version bump, release notes and a new package manifest cut from the release commit | release process | **NOT YET DONE** (candidate manifest only) |
+| A12 | Version bump, release notes and a new package manifest cut from the release commit | release process | DONE in v0.3.0 (`docs/RELEASE_GATES_V03.md`) |
 
 Still blocked for production (unchanged from v0.2): authenticated remote delivery, synchronized
 timestamps, live WS + REST operation, long-term consumer effect retention (Task 002), backups and

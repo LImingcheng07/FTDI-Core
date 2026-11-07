@@ -1,6 +1,6 @@
 # FTDI + Claude Code / Windows development kit
 
-This folder is the **actual FTDI-Core v0.2 source tree**, augmented with a `CLAUDE.md`, work orders, and Windows scripts. It is **not** a dummy project or a new v0.3 release. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled.
+This folder is the **FTDI-Core v0.3.0 source tree** (released 2026-11-07), with `CLAUDE.md`, work orders and Windows scripts. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled. **End users: read `docs/USER_GUIDE_zh.md` (Chinese) and `README.md`.**
 
 ## Start in PowerShell (in this folder)
 
@@ -27,12 +27,11 @@ The scripts do not install Claude Code or Python; they do not push to GitHub, do
 ## First message to Claude Code
 
 ```text
-Read CLAUDE.md, README_START_HERE.md, docs/ARCHITECTURE_V1_1.md,
-docs/DATA_CONTRACT_V1.md, and tasks/001-archive-aware-e2e-audit.md.
-Do not change code yet. First run the baseline test suites, inspect the
-relevant archive and E2E implementations, then provide a scoped implementation
-plan, risk assessment, and acceptance tests. Wait for my approval before
-changing database schema, pruning, or deleting data. Respond in Chinese.
+Read CLAUDE.md, README_START_HERE.md, docs/ARCHITECTURE_V1_2.md,
+docs/DATA_CONTRACT_V1.md and docs/RELEASE_GATES_V03.md. Run both test suites
+first, then propose the next scoped task with contract, acceptance tests and
+risks. Ask before deleting data or compacting real consumer databases.
+Respond in Chinese.
 ```
 
 ## Re-run tests later
@@ -41,15 +40,16 @@ changing database schema, pruning, or deleting data. Respond in Chinese.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 ```
 
-Expected Windows-ready patched baseline: **65/65 Core + 45/45 compatibility = 110/110** (verified by the owner on native Windows, 2026-11-06). With Task 001 (branch `feat/archive-e2e-audit`): **263 Core + 45 compatibility**, verified on native Windows 11 / Python 3.11.9 (`docs/TEST_REPORT_TASK001.md`).
+Expected for v0.3.0: **277 Core + 45 frozen compatibility = 322 tests**, verified on native Windows 11 / Python 3.11.9 (`docs/RELEASE_GATES_V03.md`). The v0.2 baseline was 65 + 45. Verify the package files with `python scripts\Check-Release-Manifest.py`.
 
 ## Known limits
 
-- `FTDI-Core v0.2` is a local research/development prototype. It is not certified for production trading or real-time trading decisions.
+- `FTDI-Core v0.3` is a local research/development prototype. It is not certified for production trading or real-time trading decisions.
 - The 554,441-row historical BTCUSDT source ZIP is **not bundled**, so the first setup does not require market data.
 - The E2E laboratory uses an independent SQLite consumer process and localhost HTTP. It cannot guarantee exactly-once side effects in unrelated services.
 - Performance: keep run directories on an SSD (an HDD made full-day delivery ~6x slower; `docs/PERF_WINDOWS_DELIVERY.md`) and use `--batch 1024` for large historical deliveries.
-- `audit-e2e` refuses already-archived prefixes by design; do not interpret that explicit refusal as a broken data-integrity check. Use the read-only `python -m ftdi_core audit-e2e-archive --outdir RUN --consumer-db CONSUMER.sqlite3 [--report REPORT.json]` for archived runs (`docs/ARCHIVE_E2E_AUDIT.md`).
+- `audit-e2e` refuses already-archived prefixes by design; do not interpret that explicit refusal as a broken data-integrity check. Use the read-only `python -m ftdi_core audit-e2e-archive --outdir RUN --consumer-db CONSUMER.sqlite3 [--report REPORT.json]` for archived or compacted runs (`docs/ARCHIVE_E2E_AUDIT.md`).
+- Retention (`archive-producer`, `consumer-retention`) is a dry run unless `--apply`; archive files are never deleted. A compacted consumer DB only shrinks after a VACUUM, which no command performs.
 - For developer review, share `git diff`, test output, and report JSON instead of copying the entire data archive repeatedly.
 
 See `docs/DEV_WORKFLOW.md` and `tasks/` for the work process.

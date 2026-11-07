@@ -20,23 +20,29 @@ def connect_db(root, alias):
     reg=json.loads((root/'lane_registry.json').read_text(encoding='utf-8'))
     if alias not in reg:raise ValueError('Unknown registered lane')
     path=root/'lanes'/alias/'state.sqlite3'
+    if not path.is_file():
+        raise FileNotFoundError(f'producer state database missing: {path}')
     db=sqlite3.connect(str(path),timeout=30)
-    db.row_factory=sqlite3.Row
-    db.execute('PRAGMA foreign_keys=ON')
-    db.execute('PRAGMA busy_timeout=30000')
-    db.execute('PRAGMA synchronous=FULL')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_retention_outbox_raw ON outbox(raw_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_retention_delivery_raw ON delivery(raw_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_retention_pending_raw ON pending(raw_id)')
-    db.execute('''CREATE TABLE IF NOT EXISTS archive_segments (
-          start_file_index INTEGER PRIMARY KEY,
-          end_file_index INTEGER NOT NULL,
-          record_count INTEGER NOT NULL,
-          outbox_count INTEGER NOT NULL,
-          archive_path TEXT NOT NULL,
-          archive_sha256 TEXT NOT NULL
-    )''')
-    db.commit()
+    try:
+        db.row_factory=sqlite3.Row
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('PRAGMA busy_timeout=30000')
+        db.execute('PRAGMA synchronous=FULL')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_retention_outbox_raw ON outbox(raw_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_retention_delivery_raw ON delivery(raw_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_retention_pending_raw ON pending(raw_id)')
+        db.execute('''CREATE TABLE IF NOT EXISTS archive_segments (
+              start_file_index INTEGER PRIMARY KEY,
+              end_file_index INTEGER NOT NULL,
+              record_count INTEGER NOT NULL,
+              outbox_count INTEGER NOT NULL,
+              archive_path TEXT NOT NULL,
+              archive_sha256 TEXT NOT NULL
+        )''')
+        db.commit()
+    except BaseException:
+        db.close()   # Windows: a leaked handle would keep the lane DB locked
+        raise
     return db,reg[alias]
 
 
@@ -63,8 +69,13 @@ def collect_archivable(db,start,limit):
         if pend:break
         dispo=db.execute('SELECT outcome,detail FROM disposition WHERE raw_id=?',(r['id'],)).fetchone()
         if dispo is None:break
-        outbox=db.execute('SELECT * FROM outbox WHERE raw_id=?',(r['id'],)).fetchone()
-        delivery=db.execute('SELECT * FROM delivery WHERE raw_id=?',(r['id'],)).fetchone()
+        outboxes=db.execute('SELECT * FROM outbox WHERE raw_id=?',(r['id'],)).fetchall()
+        deliveries=db.execute('SELECT * FROM delivery WHERE raw_id=?',(r['id'],)).fetchall()
+        if len(outboxes)>1 or len(deliveries)>1:
+            # Deletion is by raw_id: a second row would be removed without being archived or receipted.
+            raise ValueError('Several outbox or delivery rows reference one raw record; refuse archival')
+        outbox=outboxes[0] if outboxes else None
+        delivery=deliveries[0] if deliveries else None
         if outbox is not None and (not outbox['delivered'] or delivery is None):
             break
         if dispo['outcome']=='ORDERED_PUBLISHED' and outbox is None:
@@ -81,7 +92,8 @@ def collect_archivable(db,start,limit):
             oe=json.loads(outbox['payload'])
             if hashlib.sha256(canonical(oe).encode('utf-8')).hexdigest()!=outbox['raw_sha256']:
                 raise ValueError('Tampered outbox payload; refuse archival')
-            if outbox['raw_sha256']!=delivery['raw_sha256'] or outbox['seq']!=delivery['seq']:
+            if (outbox['raw_sha256']!=delivery['raw_sha256'] or outbox['seq']!=delivery['seq'] or
+                    outbox['lane']!=delivery['lane']):
                 raise ValueError('External ACK evidence mismatch')
             item['outbox']={'lane':outbox['lane'],'seq':outbox['seq'],'raw_sha256':outbox['raw_sha256'],
                             'payload':outbox['payload'],'acknowledged':True}
@@ -110,6 +122,17 @@ def export_gzip(path,items):
     if sha256_file(path)!=checksum:
         raise ValueError('Archive was not durable or changed prior to prune')
     return checksum
+
+
+def require_independent(root,consumer_db):
+    """The receipt source must be an existing DB that is none of this run's producer lane DBs."""
+    if consumer_db is None or not Path(consumer_db).is_file():
+        raise ValueError('Verified independent --consumer-db is required before any prune')
+    reg=json.loads((Path(root)/'lane_registry.json').read_text(encoding='utf-8'))
+    for alias in reg:
+        lane_db=Path(root)/'lanes'/alias/'state.sqlite3'
+        if lane_db.is_file() and os.path.samefile(lane_db,consumer_db):
+            raise ValueError('Consumer effects DB must be independent of every producer lane DB')
 
 
 def check_receipts(consumer_db,items):
@@ -156,6 +179,7 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
         old_size=(root/'lanes'/alias/'state.sqlite3').stat().st_size
         if not items:
             return {'lane':alias,'archived_new':0,'archived_total':start,'blocked':True,'db_bytes':old_size}
+        require_independent(root,consumer_db)
         check_receipts(consumer_db,items)
         end=start+len(items)   # half-open
         archive=root/'archives'/alias/f'raw_{start:012d}_{end:012d}.jsonl.gz'
@@ -169,7 +193,6 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
         try:
             if int(get_meta(db,'archived_records') or 0)!=start:
                 raise ValueError('Concurrent pruning cursor change; rollback')
-            ids=[x['id'] for x in items]
             for x in items:
                 current=db.execute('SELECT file_index,processed,raw_sha256 FROM raw_journal WHERE id=?',(x['id'],)).fetchone()
                 if (current is None or current['file_index']!=x['file_index'] or
@@ -180,11 +203,14 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
                 out=db.execute('SELECT delivered FROM outbox WHERE raw_id=?',(x['id'],)).fetchone()
                 if out is not None and not out['delivered']:
                     raise ValueError('Unacknowledged event not prunable')
-            for raw_id in ids:
-                db.execute('DELETE FROM delivery WHERE raw_id=?',(raw_id,))
-                db.execute('DELETE FROM outbox WHERE raw_id=?',(raw_id,))
-                db.execute('DELETE FROM disposition WHERE raw_id=?',(raw_id,))
-                db.execute('DELETE FROM raw_journal WHERE id=?',(raw_id,))
+            for x in items:
+                raw_id=x['id']
+                counts=(db.execute('DELETE FROM delivery WHERE raw_id=?',(raw_id,)).rowcount,
+                        db.execute('DELETE FROM outbox WHERE raw_id=?',(raw_id,)).rowcount,
+                        db.execute('DELETE FROM disposition WHERE raw_id=?',(raw_id,)).rowcount,
+                        db.execute('DELETE FROM raw_journal WHERE id=?',(raw_id,)).rowcount)
+                if counts!=((1,1,1,1) if 'outbox' in x else (0,0,1,1)):
+                    raise ValueError('Rows deleted differ from the archived evidence; rollback')
             db.execute('''INSERT INTO archive_segments VALUES(?,?,?,?,?,?)''',
                        (start,end,len(items),out_count,str(archive.resolve()),checksum))
             set_meta(db,'archived_records',end)

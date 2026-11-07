@@ -34,10 +34,18 @@ The consumer `effects` table no longer has to grow forever, and it never forgets
   identical → duplicate ACK; different content → HTTP 409; unreadable tier → HTTP 503 (no ACK).
 * `rehydrate` restores the hot rows byte-identically. Contract: `docs/CONSUMER_RETENTION_V2.md`.
 
-### 3. Tier-aware producer prune (ADR-007 phase 2, partial)
-`ftdi_core.adapters.s070041.retention` now accepts a consumer **digest row with the identical payload SHA**
-as an independent receipt, so producer archiving and consumer compaction can run in either order. A missing
-or altered digest still refuses the prune before any change.
+### 3. Producer archive in the Core CLI — `archive-producer`; tier-aware receipts (ADR-003, ADR-007 phase 2 partial)
+* New Core subcommand `archive-producer --outdir RUN --lane ALIAS --consumer-db DB [--limit N] [--apply]`.
+  Previously the producer archive was reachable only through the S07 adapter module, which applies
+  immediately. The Core command is a **dry run unless `--apply`**: it opens both databases as strict
+  read-only snapshots (no file touched), applies the adapter's own archivability rules unchanged, and reports
+  `would_archive`, the receipt sources and why it stops (`LIMIT_REACHED`, `NOT_ACKNOWLEDGED`,
+  `PENDING_SEQUENCE_GAP`, `END_OF_JOURNAL`, ...). `--apply` archives in verified segments of at most 20,000
+  events; a refusal between segments reports how many segments this run committed (each one auditable).
+  Full-day dry run: 554,441 events in 47 s.
+* The producer prune accepts a consumer **digest row with the identical payload SHA** as an independent
+  receipt, so producer archiving and consumer compaction can run in either order. A missing or altered
+  receipt refuses the chunk before any change.
 
 ### 4. Timestamp provenance — `analyze-clock-evidence` (Task 003, ADR-008)
 Read-only analysis of live-capture timestamps. Without a clock-offset model no latency or percentile is
@@ -72,7 +80,7 @@ Guidance: keep run data on an SSD, use `--batch 1024` (`docs/PERF_WINDOWS_DELIVE
 
 | Suite | Result |
 |---|---|
-| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **267 / 267 OK** (65 v0.2 baseline + 202 new) |
+| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **277 / 277 OK** (65 v0.2 baseline + 212 new) |
 | Frozen S07 compatibility (`reference_s07_0041/`) | **45 / 45 OK** |
 | Independent black-box contract tests (Codex, written from the contracts only) | 48 audit + 75 retention, included above |
 | Independent adversarial reviews | audit: C1–C8; retention: R1–R6 — all fixed with mutation-checked regressions |

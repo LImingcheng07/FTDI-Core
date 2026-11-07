@@ -32,13 +32,13 @@ python -m ftdi_core --version                  # ftdi-core 0.3.0
 
 ```powershell
 python -m ftdi_core prepare --archive D:\data\BTCUSDT-aggTrades-2024-06-01.zip `
-    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.zip --outdir C:\ftdi\prepared --limit 0
+    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.CHECKSUM --outdir C:\ftdi\prepared --limit 0
 python -m ftdi_core replay --lane "BTC=C:\ftdi\prepared\BTCUSDT-aggTrades-full-core-v1.jsonl" `
     --outdir C:\ftdi\run --batch 1024 --max-pending 4096 --max-backlog 8192
 python -m ftdi_core audit --outdir C:\ftdi\run
 ```
 
-- `prepare` 会核对 ZIP 的 SHA-256 与配套校验文件，保留原始 CSV 的全部 8 列；原始 ZIP **只读、永不修改**。
+- `prepare` 会核对 ZIP 的 SHA-256 与配套校验文件（Binance 官方命名为 `.zip.CHECKSUM`，内容是 `哈希  文件名`；文件名不同也可以，例如您现有的 `BTCUSDT-aggTrades-2024-06-01.zip.zip`），保留原始 CSV 的全部 8 列；原始 ZIP **只读、永不修改**。
 - `--limit 0` 表示全量；不加时默认只取前 50,000 条。
 - 有缺口、冲突或格式错误时，回放会**停下并报告**，绝不跳过。
 
@@ -107,7 +107,7 @@ python -m ftdi_core consumer-retention rehydrate --consumer-db ... --lane BTC --
 
 ```powershell
 python scripts\acceptance_full_day.py --archive D:\data\BTCUSDT-aggTrades-2024-06-01.zip `
-    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.zip --workdir C:\ftdi_acceptance
+    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.CHECKSUM --workdir C:\ftdi_acceptance
 ```
 
 在一个**新目录**里跑完整链路，包括：两种顺序的归档与压缩、生产端重启重发、篡改检测、旧程序写入拦截、恢复一致性。

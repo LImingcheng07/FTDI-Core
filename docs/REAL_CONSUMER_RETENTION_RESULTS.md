@@ -40,4 +40,6 @@ compacted.** Machine-readable evidence: `examples/REAL_CONSUMER_RETENTION_EVIDEN
   audit reader during planning and again inside its transaction ("never write an archive we cannot read
   back"). An optimization candidate, not a correctness issue.
 - Phase-1 constraint confirmed: archive the producer before compacting the consumer for the same range.
+  **Resolved in v0.3.0**: the producer prune accepts identical consumer digests as receipts; the v0.3.0
+  acceptance compacts the consumer between two producer archive steps (`examples/V030_ACCEPTANCE_EVIDENCE.json`).
 - VACUUM was run only on a copy; a VACUUM tool for real data is a separate, explicit step.

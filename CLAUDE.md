@@ -1,13 +1,13 @@
 # FTDI-Core: instructions for Claude Code
 
-You are working on FTDI-Core v0.2 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
+You are working on FTDI-Core v0.3.0 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
 
 **Governance (since 2026-11-06, see `FTDI_CLAUDE_CODE_HANDOFF.md`)**: Claude Code owns architecture, implementation, tests, refactoring and versioning decisions. Older steps that require approval from ChatGPT or a reviewer are superseded. The owner's explicit consent is still required for irreversible or high-risk actions: deleting real data/archives/consumer DBs, destructive schema migrations, `git push`/force/reset/history rewrites, credentials, accounts or trading. Work may be delegated to local agents (e.g. `codex exec`); verify delegated output before relying on it.
 
 ## First actions in every session
-1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/DATA_CONTRACT_V1.md and docs/RELEASE_GATES_V02.md.
+1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/ARCHITECTURE_V1_2.md, docs/DATA_CONTRACT_V1.md and docs/RELEASE_GATES_V03.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 263 with Tasks 001-003 and consumer retention v2)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 277 at v0.3.0)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.
@@ -45,4 +45,14 @@ You are working on FTDI-Core v0.2 (Python 3.10+, stdlib-only research prototype)
 - `scripts/` Windows setup/verification and packaging
 
 ## Current state
-Task 001 (archive-aware E2E audit, `ftdi_core/archive_e2e.py`) is merged into `main`; release gates in `docs/RELEASE_GATES_ARCHIVE_AUDIT_DRAFT.md`. Task 002 phase 1 (consumer retention v2) is implemented: `consumer-retention migrate|compact|rehydrate` (dry run unless `--apply`), tier-aware consumer used by `lab-e2e`, v2-aware `audit-e2e-archive` (`docs/CONSUMER_RETENTION_V2.md`, ADR-007). Archive the producer before compacting the consumer (S07 prune needs consumer hot rows). Compacting the owner's own data still requires explicit consent; phase 2 = digest watermark D and a tier-aware producer prune. Full-day real-data audit passed (gate A11, `docs/REAL_ARCHIVE_AUDIT_RESULTS.md`). Still open: a release cut with version bump and manifest (A12). Task 003: timestamp-provenance contract + `analyze-clock-evidence` (ADR-008); the live pilot yields no latency. Windows delivery slowness traced to the E: HDD; consumer checkpoint tuning (ADR-009). Keep run data on the NVMe SSD (C:). Next: the owner's decision on Task 002 schema v2/compactor; a live adapter with decoupled reader, queue depth and offset sampling (network; owner's machine only).
+**v0.3.0 released 2026-11-07** (tag `v0.3.0`, local only; `RELEASE_NOTES_v0.3.0.md`, gates `docs/RELEASE_GATES_V03.md`,
+manifest `release/PACKAGE_MANIFEST.v0.3.0.json`, ZIP built by `scripts/build_release.py`). Contents: Task 001 archive-aware
+audit (`audit-e2e-archive`, ADR-006); Task 002 phase 1 consumer retention v2 (`consumer-retention`, `plan-consumer-retention`,
+ADR-007); Core `archive-producer` (dry run unless `--apply`) whose prune accepts identical v2 digests as receipts, so producer
+archive and consumer compaction run in either order; Task 003 timestamp provenance (`analyze-clock-evidence`, ADR-008; the
+live pilot yields no latency); consumer checkpoint tuning (ADR-009). Full-day acceptance: `scripts/acceptance_full_day.py`
+(evidence `examples/V030_ACCEPTANCE_EVIDENCE.json`). The owner's own data was never compacted; doing so still needs explicit
+consent. Keep run data on the NVMe SSD (C:), not the E: HDD.
+Open, in suggested order: digest watermark D (move digests into segments) and an explicit VACUUM tool for real data; a
+live adapter with a reader decoupled from persistence, queue depth and offset sampling (network; owner's machine only);
+authenticated delivery; backups/power-loss tests; signed evidence.

@@ -24,6 +24,8 @@
 
 **Consequence**: User can develop and audit without accidentally pruning source data or starting a trading service.
 
+**v0.3 (2026-11-07)**: the "later CLI" exists as `archive-producer`: explicit `--consumer-db`, a strict read-only dry run applying the adapter's own rules (default), `--apply` as the separate destructive opt-in, and `audit-e2e-archive` for the archived result. The adapter module entry point is unchanged.
+
 ## ADR-004 -- Live ingress is a gated boundary, not a shortcut (ACCEPTED)
 
 **Context**: Windows live WS proved 200 observed BTCUSDT events but 199/200 local minus exchange timestamp deltas were negative; real reconnect and 24h uptime are untested.
@@ -64,6 +66,8 @@
 **Decision (proposed)**: per `(lane, epoch)`, retention moves evidence between three tiers and never forgets an identity's digest: hot rows (`seq > C`), a compact digest table (`D < seq <= C`), and verified hash-chained archive segments (`seq <= D`). `C` is bounded by the consumer's contiguous applied high and, for performance only, by the producer's low-unacked sequence; `D <= C` is an explicit owner choice. No TTL; holes, unknown lanes and other epochs are never covered. `accept()` answers replays from whichever tier holds the identity and refuses the batch (no ACK) if that tier is unreadable. The audit must reconcile compacted tiers before the first real compaction. Full specification, schema v2 proposal, failure matrix and gates: `docs/TASK002_CONSUMER_RETENTION_DESIGN.md`.
 
 **Implemented**: the read-only planner, and (owner approved on 2026-11-07) phase 1 per `docs/CONSUMER_RETENTION_V2.md`: additive schema v2 with an insert-guard trigger, dry-run-by-default `migrate`/`compact`/`rehydrate`, the tier-aware consumer used by `lab-e2e`, and the v2 extension of `audit-e2e-archive`. The digest watermark D and a tier-aware producer prune are phase 2. Compaction of the owner's real data still requires the owner's explicit consent.
+
+**Phase 2, partial (v0.3.0)**: the producer prune (maintained adapter, `check_receipts`) accepts a v2 digest row with the identical payload SHA for the same lane/seq as an independent receipt, so producer archiving and consumer compaction can run in either order; a missing or altered digest refuses the chunk before any change (`tests/test_tiered_prune.py`, `tests/test_producer_retention.py`, full-day acceptance). The digest watermark D remains open.
 
 ## ADR-008 -- Timestamp provenance: no latency without a clock model (ACCEPTED for local development, 2026-11-07)
 
