@@ -41,14 +41,14 @@ changing database schema, pruning, or deleting data. Respond in Chinese.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 ```
 
-Expected Windows-ready patched baseline: **65/65 Core + 45/45 compatibility = 110/110**. This was verified under Linux before packaging; native Windows execution still needs to be checked on the destination machine.
+Expected Windows-ready patched baseline: **65/65 Core + 45/45 compatibility = 110/110** (verified by the owner on native Windows, 2026-11-06). With Task 001 (branch `feat/archive-e2e-audit`): **152 Core + 45 compatibility**, verified on native Windows 11 / Python 3.11.9 (`docs/TEST_REPORT_TASK001.md`).
 
 ## Known limits
 
 - `FTDI-Core v0.2` is a local research/development prototype. It is not certified for production trading or real-time trading decisions.
 - The 554,441-row historical BTCUSDT source ZIP is **not bundled**, so the first setup does not require market data.
 - The E2E laboratory uses an independent SQLite consumer process and localhost HTTP. It cannot guarantee exactly-once side effects in unrelated services.
-- Current audit refuses already-archived prefixes; do not interpret that explicit refusal as a broken data-integrity check.
+- `audit-e2e` refuses already-archived prefixes by design; do not interpret that explicit refusal as a broken data-integrity check. Use the read-only `python -m ftdi_core audit-e2e-archive --outdir RUN --consumer-db CONSUMER.sqlite3 [--report REPORT.json]` for archived runs (`docs/ARCHIVE_E2E_AUDIT.md`).
 - For developer review, share `git diff`, test output, and report JSON instead of copying the entire data archive repeatedly.
 
 See `docs/DEV_WORKFLOW.md` and `tasks/` for the work process.

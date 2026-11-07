@@ -20,6 +20,15 @@
 | Clock offset unknown | No one-way latency SLA claimed | Contract test |
 | Live WS disconnect/network DNS failure | Must not synthesize market data or claim repair | S07-005 prototype only; **not** Core production gate |
 | Windows SQLite lock | Explicit closing on failure; native Windows QA needed | Inherited regression + strict warning tests on Linux |
+| Archived quarantine hidden by prune (local audit flips FAIL->PASS) | `audit-e2e-archive` re-reads archived dispositions: `ARCHIVED_QUARANTINE_PRESENT`, INCONSISTENT | Core archive tests |
+| Archive segment missing / truncated / bit-flipped / garbage / extra gzip member | Fail closed with specific code, never COMPLETE | Core archive tests |
+| Self-consistent archive forgery (archive rewritten, manifest SHA updated) | Source-line anchoring and raw->outbox binding detect it | Core archive tests |
+| Archive copied/moved to another root | Only canonical in-root files read; stored path never opened; relocation requires explicit flag | Core archive tests |
+| Evidence changes while the audit runs | Pre/post fingerprints + `data_version`: `CONCURRENT_MODIFICATION_DETECTED` | Core archive internals tests |
+| Hostile archive sizes (decompression bomb, huge lines, deep JSON) | Bounded memory, explicit finding, no crash | Core archive tests |
+| Quarantined or delivered record relabelled `DUPLICATE_IDENTICAL` | Duplicate claim proven against an identical published event; else `DISPOSITION_CLAIM_UNVERIFIED` | Review regression C1 |
+| View/virtual table substituted for an evidence table | Rejected as unrecognized schema before any query (no hang) | Review regression C4 |
+| Junction/symlink under `archives/` | Never enumerated or written through; report path vetted after resolution | Review regressions C3, C7 |
 | Disk full / torn sector / power loss / shared disk exhaustion | Fail closed, preserve committed log per OS/storage semantics | **NOT YET TESTED** |
 
 ## Interpretation

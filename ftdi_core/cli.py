@@ -11,6 +11,7 @@ from .service import replay
 from .audit import audit
 from .delivery import local_lab
 from .e2e import reconcile
+from .archive_e2e import reconcile_archive_aware
 
 
 def main(argv=None) -> int:
@@ -40,6 +41,14 @@ def main(argv=None) -> int:
     e = sub.add_parser('audit-e2e',help='Independently reconcile resident producer and consumer events')
     e.add_argument('--outdir',type=Path,required=True)
     e.add_argument('--consumer-db',type=Path,required=True)
+    f = sub.add_parser('audit-e2e-archive',
+                       help='Read-only archive-aware reconciliation: archived prefix + resident outbox vs consumer effects')
+    f.add_argument('--outdir',type=Path,required=True)
+    f.add_argument('--consumer-db',type=Path,required=True)
+    f.add_argument('--report',type=Path,
+                   help='Write the JSON report here (atomic; never inside lanes/ or archives/). Default: stdout only')
+    f.add_argument('--allow-relocated-archives',action='store_true',
+                   help='Accept archive_path values recorded under another run root; only in-root files are read')
     args = p.parse_args(argv)
     try:
         if args.cmd == 'prepare':
@@ -56,6 +65,10 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'audit-e2e-archive':
+            result = reconcile_archive_aware(args.outdir,args.consumer_db,report_path=args.report,
+                                             allow_relocated_archives=args.allow_relocated_archives)
+            good = result['passed']
         else:
             result = reconcile(args.outdir,args.consumer_db)
             good = result['passed']
