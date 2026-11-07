@@ -142,20 +142,29 @@ def has_v2_objects(db):
     return db.execute("SELECT 1 FROM sqlite_master WHERE lower(name) = 'consumer_meta'").fetchone() is not None
 
 
-def v2_problem(db):
-    """None if every v2 object is exactly as specified (tables, trigger, schema marker)."""
+def v2_table_problem(db):
+    """None if every v2 table and the schema marker are exactly as specified."""
     for table, columns in V2_COLUMNS.items():
         problem = _plain_table(db, table, columns)
         if problem:
             return f'{table}: {problem}'
-    trigger = db.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
-                         (TRIGGER_NAME,)).fetchone()
-    if trigger is None or ' '.join(str(trigger[0]).split()) != ' '.join(TRIGGER_SQL.split()):
-        return f'trigger {TRIGGER_NAME} missing or altered'
     row = db.execute("SELECT v FROM consumer_meta WHERE k = 'schema'").fetchone()
     if row is None or row[0] != SCHEMA_V2:
         return 'consumer_meta schema marker missing or wrong'
     return None
+
+
+def trigger_problem(db):
+    trigger = db.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                         (TRIGGER_NAME,)).fetchone()
+    if trigger is None or ' '.join(str(trigger[0]).split()) != ' '.join(TRIGGER_SQL.split()):
+        return f'trigger {TRIGGER_NAME} missing or altered'
+    return None
+
+
+def v2_problem(db):
+    """None if every v2 object is exactly as specified (tables, trigger, schema marker)."""
+    return v2_table_problem(db) or trigger_problem(db)
 
 
 def _snapshot(path):
@@ -311,12 +320,17 @@ def compact_consumer(consumer_db, *, lane, epoch=0, content_watermark, producer_
     snap = _snapshot(path)
     try:
         state, chunks = _plan(snap.conn, lane, epoch, content_watermark, segment_size)
+        lane_row = snap.conn.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
+        lane_id = lane_row['lane_id'] if lane_row else snap.conn.execute(
+            'SELECT COALESCE(MAX(lane_id), 0) + 1 FROM lane_ids').fetchone()[0]
         rows = payload_bytes = 0
         for start, end in chunks:                 # validate everything first, one segment in memory at a time
             chunk = _check_range(snap.conn, lane, epoch, start, end)
             rows += len(chunk)
             payload_bytes += sum(len(r['payload']) for r in chunk)
-        lane_row = snap.conn.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
+            target = archive_root(path) / segment_relative_path(lane_id, epoch, start, end)
+            if os.path.lexists(target) and (not target.is_file() or target.read_bytes() != segment_bytes(chunk)):
+                raise ValueError(f'existing archive file has different content: {target.name}')
     finally:
         snap.close()
     planned = [{'start_seq': s, 'end_seq': e, 'record_count': e - s + 1} for s, e in chunks]
@@ -325,7 +339,7 @@ def compact_consumer(consumer_db, *, lane, epoch=0, content_watermark, producer_
                 'current_content_watermark': state['content_watermark'] if state else None,
                 'content_watermark': content_watermark, 'segments': planned, 'rows': rows,
                 'payload_bytes': payload_bytes, 'producer_window': producer,
-                'lane_id': lane_row['lane_id'] if lane_row else None}
+                'lane_id': lane_id}
 
     written = []
     db = _writer(path)
@@ -454,10 +468,11 @@ def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=F
         if state is None:
             return {'status': 'NOTHING_TO_DO', 'consumer_db': str(path), 'lane': lane, 'epoch': epoch}
         lane_id, segments = _verified_segments(snap.conn, path, lane, epoch, state)
-        target = state['first_seq'] - 1 if to_watermark is None else to_watermark
+        requested = state['first_seq'] - 1 if to_watermark is None else to_watermark
+        if type(requested) is not int or not state['first_seq'] - 1 <= requested < state['content_watermark']:
+            raise ValueError(f'to_watermark must be in [{state["first_seq"] - 1}, {state["content_watermark"] - 1}]')
         boundaries = {state['first_seq'] - 1} | {seg['end_seq'] for seg in segments}
-        if type(target) is not int or target not in boundaries or target >= state['content_watermark']:
-            raise ValueError(f'to_watermark must be a segment boundary below C: one of {sorted(boundaries)[:-1]}')
+        target = max(b for b in boundaries if b <= requested)   # round down: restore at least what was asked
         restore = [seg for seg in reversed(segments) if seg['start_seq'] > target]
         for seg in restore:
             _segment_rows(path, lane, epoch, seg)            # verify every file before changing anything
@@ -466,7 +481,8 @@ def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=F
     plan = [{'start_seq': s['start_seq'], 'end_seq': s['end_seq'], 'record_count': s['record_count']} for s in restore]
     if not apply:
         return {'status': 'DRY_RUN', 'consumer_db': str(path), 'lane': lane, 'epoch': epoch,
-                'content_watermark': state['content_watermark'], 'to_watermark': target, 'segments': plan}
+                'content_watermark': state['content_watermark'], 'requested_to_watermark': requested,
+                'to_watermark': target, 'segments': plan}
     db = _writer(path)
     try:
         for seg in restore:
@@ -503,7 +519,7 @@ def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=F
     finally:
         db.close()
     return {'status': 'REHYDRATED', 'consumer_db': str(path), 'lane': lane, 'epoch': epoch,
-            'to_watermark': target, 'segments': plan, 'archive_files_kept': True}
+            'requested_to_watermark': requested, 'to_watermark': target, 'segments': plan, 'archive_files_kept': True}
 
 
 # -- tier-aware consumer store -------------------------------------------------------------

@@ -15,6 +15,7 @@ from urllib.error import URLError
 
 from .adapters.s070041.outbox_publisher import publish
 from .e2e import reconcile
+from .archive_e2e import reconcile_archive_aware
 
 
 def _validate_independent(root, consumer_db):
@@ -64,6 +65,32 @@ def _await_consumer_ready(ready: Path, proc, *, timeout=15.0):
         time.sleep(.025)
 
 
+def _needs_archive_aware_audit(root, consumer_db):
+    """True when the resident-only audit would refuse by design: a producer lane has an archived
+    prefix, or the consumer was migrated to retention v2. Read-only checks."""
+    from .archive_e2e import _Snapshot, _Unopenable
+    from .consumer_retention import has_v2_objects
+    registry=json.loads((Path(root)/'lane_registry.json').read_text(encoding='utf-8'))
+    candidates=[(Path(consumer_db).resolve(),'consumer')]+[
+        ((Path(root)/'lanes'/alias/'state.sqlite3').resolve(),alias) for alias in registry]
+    for path,label in candidates:
+        try:
+            snap=_Snapshot(path,label)
+        except _Unopenable:
+            return True   # let the archive-aware audit report SNAPSHOT_UNVERIFIABLE explicitly
+        try:
+            if label=='consumer':
+                if has_v2_objects(snap.conn):
+                    return True
+            else:
+                row=snap.conn.execute("SELECT v FROM meta WHERE k='archived_records'").fetchone()
+                if row is not None and str(row[0]) not in ('','0'):
+                    return True
+        finally:
+            snap.close()
+    return False
+
+
 def local_lab(root: Path, consumer_db: Path, *, batch=256, max_batches=None, timeout=10.0):
     """Start consumer process on an OS-assigned loopback port, deliver, audit, stop.
 
@@ -95,8 +122,10 @@ def local_lab(root: Path, consumer_db: Path, *, batch=256, max_batches=None, tim
                     proc.kill();proc.wait(timeout=5)
             if proc.stderr:
                 proc.stderr.close()
-    audit=reconcile(root,consumer_db)
+    archived = _needs_archive_aware_audit(root,consumer_db)
+    audit=reconcile_archive_aware(root,consumer_db) if archived else reconcile(root,consumer_db)
     outcome={'schema':'FTDI-Core-Lab-E2E-v1','delivery':result,'audit':audit,
+             'audit_mode':'ARCHIVE_AWARE' if archived else 'RESIDENT',
              'pass':audit['passed'], 'mode':'LOCALHOST_TWO_INDEPENDENT_SQLITE_DATABASES'}
     (root/'E2E_LAB_REPORT.json').write_text(json.dumps(outcome,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     return outcome

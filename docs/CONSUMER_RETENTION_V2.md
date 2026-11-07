@@ -78,7 +78,8 @@ TierIntegrityError(Exception)    # raised by accept() when a compacted tier cann
   hole or exceeds the applied range; any row in it is invalid (event_id/payload hash/canonical text);
   neither `producer_root` nor `ignore_producer_window=True` is given; with `producer_root`, the watermark
   is ≥ the producer's low-unacked seq (`MIN(seq) WHERE delivered=0`, else `lanes.next_seq`) or the lane is
-  not registered there; an existing segment file with the target name has different bytes; `epoch != 0`.
+  not registered there; an existing segment file with the target name has different bytes (checked for
+  every planned segment before anything is written, also in a dry run); `epoch != 0`.
   `lane` is the exact lane scope string (JSON array text, as stored in `effects.lane`).
 - Apply procedure per segment, inside one `BEGIN IMMEDIATE` held for the whole segment: read and
   validate rows → write `.tmp`, fsync, re-read and verify every line → `os.replace` to the final name →
@@ -86,7 +87,9 @@ TierIntegrityError(Exception)    # raised by accept() when a compacted tier cann
   COMMIT. `crash_stage` (test only): `'after_segment_file'` = `os._exit(86)` after the final file exists
   but before COMMIT; `'after_commit'` = `os._exit(86)` right after COMMIT.
 - `rehydrate_consumer` restores rows from verified segments, newest first, down to `to_watermark`
-  (default: everything, i.e. `first_seq - 1`). Per segment, in one transaction: lower C to
+  (default: everything, i.e. `first_seq - 1`). A `to_watermark` inside a segment is rounded **down** to the
+  segment boundary (the resulting C is the largest boundary <= `to_watermark`), so at least the requested
+  range becomes hot again; values outside `[first_seq - 1, C - 1]` are refused. Per segment, in one transaction: lower C to
   `start_seq - 1` (or drop the state row when nothing remains), insert the rows, delete their digests,
   delete the segment row, set `chain_head = prev_chain`. **Archive files are never deleted.** A rehydrated
   `effects` table is row-for-row identical to the pre-compaction table.
@@ -121,7 +124,19 @@ python -m ftdi_core consumer-retention rehydrate --consumer-db DB --lane LANE [-
 Exit codes: 0 = success or dry run; 3 = refusal / precondition failure (`FTDI_CORE_FAIL_CLOSED: ...`).
 JSON on stdout (ASCII-only).
 
-## 6. `audit-e2e-archive` on a v2 consumer
+## 6. Operational constraints (phase 1)
+
+- **Archive the producer before compacting the consumer** for the same range: the S07 producer prune
+  (`retention.prune`) accepts only consumer *hot rows* as receipts, so after consumer compaction those
+  producer rows can no longer be pruned (fail-closed, never unsafe). A tier-aware receipt check is phase 2.
+- `lab-e2e` audits with `audit-e2e-archive` automatically when a producer lane has an archived prefix or the
+  consumer is v2 (the resident-only `audit-e2e` refuses both by design); otherwise unchanged
+  (`audit_mode` in the lab report).
+- Run compaction in a maintenance window: each segment holds `BEGIN IMMEDIATE` and blocks consumer writes
+  for its duration (busy_timeout 30 s).
+- File space is reclaimed only by an explicit VACUUM, which is out of scope here.
+
+## 7. `audit-e2e-archive` on a v2 consumer
 
 v1 consumers are audited exactly as before. When `consumer_meta.schema = 'FTDI-Consumer-v2'`, the v2
 objects (tables with exact columns, the trigger) must be recognized, and for every `retention_state` row:

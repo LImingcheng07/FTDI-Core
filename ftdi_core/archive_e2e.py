@@ -72,7 +72,8 @@ SEGMENT_COLUMNS = ('start_file_index', 'end_file_index', 'record_count', 'outbox
 EFFECT_COLUMNS = ('event_id', 'lane', 'seq', 'epoch', 'payload_sha256', 'payload')
 
 NOTICE_CODES = frozenset({'UNREFERENCED_ARCHIVE_FILE', 'UNRECOGNIZED_ARCHIVE_DIR_ENTRY',
-                          'ARCHIVE_PATH_RELOCATED_ALLOWED', 'SOURCE_MANIFEST_ABSENT'})
+                          'ARCHIVE_PATH_RELOCATED_ALLOWED', 'SOURCE_MANIFEST_ABSENT',
+                          'UNREFERENCED_CONSUMER_SEGMENT_FILE'})
 METRIC_KEYS = ('producer_outbox', 'producer_acked', 'archived_records', 'archived_records_parsed',
                'archived_segments', 'archived_segments_parsed', 'archived_events',
                'archived_events_matched', 'archived_quarantined', 'expected_events_total',
@@ -704,11 +705,14 @@ class _Auditor:
         if not cr.has_v2_objects(db):
             return
         self.consumer_v2 = True
-        problem = cr.v2_problem(db)
+        problem = cr.v2_table_problem(db)
         if problem:
             findings.add('CONSUMER_SCHEMA_UNRECOGNIZED', reason=problem)
             self.consumer_ok = False
             return
+        trigger = cr.trigger_problem(db)
+        if trigger:   # fatal, but keep verifying so e.g. an overlap behind a dropped trigger is named
+            findings.add('CONSUMER_SCHEMA_UNRECOGNIZED', reason=trigger)
         root = cr.archive_root(self.consumer_db)
         redirected = os.path.lexists(root) and _redirected(root)
         lane_ids = {r['lane']: r['lane_id'] for r in db.execute('SELECT lane_id, lane FROM lane_ids')}

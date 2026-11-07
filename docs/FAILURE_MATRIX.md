@@ -29,6 +29,10 @@
 | Quarantined or delivered record relabelled `DUPLICATE_IDENTICAL` | Duplicate claim proven against an identical published event; else `DISPOSITION_CLAIM_UNVERIFIED` | Review regression C1 |
 | View/virtual table substituted for an evidence table | Rejected as unrecognized schema before any query (no hang) | Review regression C4 |
 | Junction/symlink under `archives/` | Never enumerated or written through; report path vetted after resolution | Review regressions C3, C7 |
+| Replay of a compacted consumer identity (producer restored or restarted) | Answered from the digest tier: identical -> duplicate, different -> 409, digest missing -> 503 and no ACK | Consumer retention tests + full-day restart replay |
+| Old/frozen consumer writes into a compacted range | `effects_guard_compacted` trigger aborts the insert; no second effect | Consumer retention tests + full-day legacy check |
+| Crash during consumer compaction | before COMMIT: rows kept, orphan segment reported, retry reuses identical bytes; after COMMIT: consistent | Subprocess crash tests |
+| Consumer segment/digest/chain tampering | `audit-e2e-archive` CONSUMER_* findings, INCONSISTENT | Consumer retention tests |
 | Disk full / torn sector / power loss / shared disk exhaustion | Fail closed, preserve committed log per OS/storage semantics | **NOT YET TESTED** |
 
 ## Interpretation

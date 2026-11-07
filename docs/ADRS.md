@@ -57,15 +57,13 @@
 
 **Consequences**: stricter than the resident-only audit (source anchoring, raw-to-outbox binding, disposition and sequence checks), so healthy runs still reach `COMPLETE` while self-consistent forgeries and hidden quarantine do not. Costs one extra sequential read per source, one indexed consumer lookup per published event, and SHA-256 of each SQLite file before and after. It does not defend against an actor able to rewrite source, registry, producer DB, archives and consumer DB together (no signatures/WORM), and does not certify events before the first observed sequence.
 
-## ADR-007 -- Consumer idempotency retention by tiered, never-forgetting watermarks (PROPOSED, 2026-11-07)
+## ADR-007 -- Consumer idempotency retention by tiered, never-forgetting watermarks (ACCEPTED for phase 1, 2026-11-07)
 
 **Context**: the consumer `effects` table is at once the business record, the idempotency memory and the conflict detector. Measured on the full day: 403.6 MiB for 554,441 events (~763 bytes/event), growing linearly. Deleting rows by age would re-open duplicate application and silent acceptance of conflicting replays (producer restored from a backup, or restarted from seq 1).
 
 **Decision (proposed)**: per `(lane, epoch)`, retention moves evidence between three tiers and never forgets an identity's digest: hot rows (`seq > C`), a compact digest table (`D < seq <= C`), and verified hash-chained archive segments (`seq <= D`). `C` is bounded by the consumer's contiguous applied high and, for performance only, by the producer's low-unacked sequence; `D <= C` is an explicit owner choice. No TTL; holes, unknown lanes and other epochs are never covered. `accept()` answers replays from whichever tier holds the identity and refuses the batch (no ACK) if that tier is unreadable. The audit must reconcile compacted tiers before the first real compaction. Full specification, schema v2 proposal, failure matrix and gates: `docs/TASK002_CONSUMER_RETENTION_DESIGN.md`.
 
-**Implemented now**: only the read-only planner `plan-consumer-retention` (dry run).
-
-**Requires the owner's approval before implementation**: consumer schema v2 (additive tables), the destructive compactor and `rehydrate`. Until then nothing deletes or compacts consumer data.
+**Implemented**: the read-only planner, and (owner approved on 2026-11-07) phase 1 per `docs/CONSUMER_RETENTION_V2.md`: additive schema v2 with an insert-guard trigger, dry-run-by-default `migrate`/`compact`/`rehydrate`, the tier-aware consumer used by `lab-e2e`, and the v2 extension of `audit-e2e-archive`. The digest watermark D and a tier-aware producer prune are phase 2. Compaction of the owner's real data still requires the owner's explicit consent.
 
 ## ADR-008 -- Timestamp provenance: no latency without a clock model (ACCEPTED for local development, 2026-11-07)
 

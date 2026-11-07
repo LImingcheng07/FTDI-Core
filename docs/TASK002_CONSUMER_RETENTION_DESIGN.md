@@ -1,6 +1,6 @@
 # Task 002 — Consumer idempotency retention (design)
 
-Status: **PROPOSED (ADR-007)**. Design, specification and a **read-only planner** are implemented.
+Status: **ACCEPTED for phase 1 (ADR-007)**; phase 1 implemented per `docs/CONSUMER_RETENTION_V2.md`. Design, specification and a **read-only planner** are implemented.
 **Destructive compaction is NOT implemented** and requires the owner's explicit approval
 (it deletes rows from the consumer DB and changes its schema).
 
@@ -135,11 +135,11 @@ tiling of `[first_seq, C]`, strict record schema, limits), the digest tier again
 
 | Gate | Content | Status |
 |---|---|---|
-| T2-1 | This design + ADR-007 accepted by the owner | **PENDING owner decision** |
+| T2-1 | This design + ADR-007 accepted by the owner | DONE (owner approved implementation, 2026-11-07) |
 | T2-2 | Read-only planner `plan-consumer-retention` (dry-run evidence: contiguity, holes, producer ACK low-water mark, proposed C, reclaimable bytes) | DONE (see §10) |
-| T2-3 | Consumer schema v2 + migration + `rehydrate`, tested on copies only | needs owner approval (schema change) |
-| T2-4 | Consumer-side archive-aware audit (R7) | after T2-3 |
-| T2-5 | Compactor `apply` (destructive), crash-injection and tamper tests, real-data run on a copy | needs owner approval (deletes rows) |
+| T2-3 | Consumer schema v2 + migration + `rehydrate`, tested on copies only | DONE (`docs/CONSUMER_RETENTION_V2.md`) |
+| T2-4 | Consumer-side archive-aware audit (R7) | DONE |
+| T2-5 | Compactor `apply` (destructive), crash-injection and tamper tests, real-data run on a copy | implemented; real-data copy run: see `docs/REAL_CONSUMER_RETENTION_RESULTS.md`. Compacting the owner's own data needs explicit consent |
 
 ## 10. Read-only planner (implemented)
 
