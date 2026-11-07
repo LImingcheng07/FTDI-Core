@@ -31,6 +31,18 @@ class ProvenanceConstantTests(unittest.TestCase):
                 self.assertEqual(token, ZIP_SHA256, f'{rel}: {token} ({len(token)} chars)')
         self.assertGreaterEqual(found, 5)
 
+    def test_hash_pinned_text_files_have_lf_line_endings(self):
+        """Manifests pin raw bytes: a CRLF working copy (e.g. from Path.write_text on Windows) would
+        not match what a clean checkout produces under the eol=lf rules in .gitattributes."""
+        offenders = []
+        for path in sorted(ROOT.rglob('*')):
+            rel = path.relative_to(ROOT)
+            if (path.is_file() and path.suffix in {'.json', '.toml', '.txt', '.md', '.py'}
+                    and rel.parts[0] not in {'.git', 'runs', 'data'} and '__pycache__' not in rel.parts
+                    and b'\r\n' in path.read_bytes()):
+                offenders.append(rel.as_posix())
+        self.assertEqual(offenders, [])
+
 
 if __name__ == '__main__':
     unittest.main()
