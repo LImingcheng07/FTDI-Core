@@ -1,0 +1,161 @@
+# FTDI-Core v0.3.0 使用手册
+
+> 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
+> 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
+> **不是交易程序**：没有下单、账户、私钥功能；不联网（只用本机 127.0.0.1）；**未经生产认证**。
+
+---
+
+## 1. 环境与安装
+
+- Windows 10/11，Python **3.10+**（只用标准库，无需安装任何依赖包）。
+- **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
+- 解压发布包 `FTDI-Core-v0.3.0-windows.zip`，在解压出的 `FTDI-Core-v0.3.0` 目录里打开 PowerShell。
+
+一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
+python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
+python -m ftdi_core --version                  # ftdi-core 0.3.0
+```
+
+## 2. 一条完整的数据链路
+
+```text
+原始 ZIP + 校验文件 ─prepare─> 规范化 JSONL ─replay─> 生产端（逐条日志 + 有序 outbox）
+     ─lab-e2e─> 独立消费端进程（本机 HTTP，先落库再确认） ─audit-e2e-archive─> 逐条对账结论
+     ─archive-producer─> 生产端历史归档      ─consumer-retention─> 消费端历史压缩（两者先后不限）
+```
+
+### 2.1 准备与回放
+
+```powershell
+python -m ftdi_core prepare --archive D:\data\BTCUSDT-aggTrades-2024-06-01.zip `
+    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.zip --outdir C:\ftdi\prepared --limit 0
+python -m ftdi_core replay --lane "BTC=C:\ftdi\prepared\BTCUSDT-aggTrades-full-core-v1.jsonl" `
+    --outdir C:\ftdi\run --batch 1024 --max-pending 4096 --max-backlog 8192
+python -m ftdi_core audit --outdir C:\ftdi\run
+```
+
+- `prepare` 会核对 ZIP 的 SHA-256 与配套校验文件，保留原始 CSV 的全部 8 列；原始 ZIP **只读、永不修改**。
+- `--limit 0` 表示全量；不加时默认只取前 50,000 条。
+- 有缺口、冲突或格式错误时，回放会**停下并报告**，绝不跳过。
+
+### 2.2 投递给独立消费端并对账
+
+```powershell
+python -m ftdi_core lab-e2e --outdir C:\ftdi\run --consumer-db C:\ftdi\consumer\effects.sqlite3 --batch 1024
+python -m ftdi_core audit-e2e-archive --outdir C:\ftdi\run --consumer-db C:\ftdi\consumer\effects.sqlite3 `
+    --report C:\ftdi\reports\audit.json
+```
+
+- `lab-e2e` 会启动一个只监听 127.0.0.1 的消费端进程。消费端**先提交、后确认**；中断后用同样的路径重跑即可续传，不会重复记账。
+- **推荐始终使用 `audit-e2e-archive`**：只读，覆盖归档和压缩后的数据，逐条核对事件身份、内容哈希和源文件每一行。
+  `audit-e2e`（v0.2 版）只看驻留数据，遇到归档会按设计直接拒绝。
+
+## 3. 审计结论与退出码
+
+| 状态 | 含义 | 退出码 |
+|---|---|---:|
+| `COMPLETE` | 每一条事件：源文件 → 生产端 → 消费端，身份与内容全部一致；审计期间证据未被改动 | 0 |
+| `PENDING_DELIVERY` | 证据一致，只是还有事件未投递 → 再跑 `lab-e2e` | 2 |
+| `RETRY_REQUIRED` | 消费端已落库、生产端确认丢失 → 再跑 `lab-e2e`（安全重发，不会重复记账） | 2 |
+| `INCONSISTENT` | 证据缺失、冲突、被篡改、序列有缺口或审计期间被改动 → 看报告里的 `issue_counts` | 2 |
+| 前置条件失败 | 文件不存在、路径非法等，输出 `FTDI_CORE_FAIL_CLOSED: ...`，**不会生成报告** | 3 |
+
+报告里每个问题都有代码（例如 `ARCHIVE_SHA256_MISMATCH`、`CONSUMER_DIGEST_MISSING`），完整含义见
+`docs/ARCHIVE_E2E_AUDIT.md` 和 `docs/CONSUMER_RETENTION_V2.md`。标为 NOTICE 的只是提示，不影响结论。
+
+## 4. 历史归档与压缩（节省空间）
+
+**所有会改动数据的命令，不加 `--apply` 都只演练、什么都不改。** 执行前请停掉投递（维护窗口），执行后跑一次审计。
+
+### 4.1 生产端归档
+
+```powershell
+python -m ftdi_core archive-producer --outdir C:\ftdi\run --lane BTC --consumer-db C:\ftdi\consumer\effects.sqlite3 --limit 500000           # 演练
+python -m ftdi_core archive-producer --outdir C:\ftdi\run --lane BTC --consumer-db C:\ftdi\consumer\effects.sqlite3 --limit 500000 --apply   # 执行
+```
+
+- 只归档**连续的、已确认的、并且消费端有独立回执**的前缀（回执可以是消费端的驻留行，也可以是压缩后的指纹）。
+  每段最多 20,000 条，写成带 SHA-256 的 gzip 段并校验后，才在同一个事务里删除库内行。
+- 演练是严格只读的，结果里的 `would_archive` 就是执行时会归档的条数；`receipts` 显示回执来源。
+- `stopped` 说明停在哪里：`LIMIT_REACHED`（达到上限）、`NOT_ACKNOWLEDGED`（后面的事件还没投递确认）、
+  `PENDING_SEQUENCE_GAP`（序列有缺口在等待）、`END_OF_JOURNAL`（已全部归档）等。
+- 任何一条缺回执、源文件被改、数据被篡改：**拒绝并报错**（退出码 3）。如果在多段之间被拒绝，报错会写明本次已经提交了多少段；
+  已提交的段都是完整、可审计的。
+
+### 4.2 消费端压缩（Task 002）
+
+```powershell
+python -m ftdi_core plan-consumer-retention --consumer-db C:\ftdi\consumer\effects.sqlite3 --producer-root C:\ftdi\run
+python -m ftdi_core consumer-retention migrate --consumer-db C:\ftdi\consumer\effects.sqlite3 --apply
+python -m ftdi_core consumer-retention compact --consumer-db C:\ftdi\consumer\effects.sqlite3 --lane BTC `
+    --producer-root C:\ftdi\run --watermark <规划给出的值或更小>            # 演练
+python -m ftdi_core consumer-retention compact ... --apply                  # 执行
+python -m ftdi_core consumer-retention rehydrate --consumer-db ... --lane BTC --producer-root C:\ftdi\run --apply   # 需要时恢复
+```
+
+- 老数据的完整内容移入 `effects.sqlite3.archive\` 下的校验归档，库里只保留每条事件的指纹，用来识别重复和冲突。
+  全天实测：397 MiB → VACUUM 后 61 MiB，归档 51 MiB。
+- 压缩后，即使生产端从头重发全部事件，也**不会重复记账**；旧版程序往压缩区间写入会被数据库直接拒绝。
+- `rehydrate` 能把数据逐行原样恢复；**归档文件永远不会被删除**。数据库文件要执行 VACUUM 才会真正变小（本工具不自动执行）。
+- 生产端归档与消费端压缩的先后顺序不限。
+
+## 5. 一键全天验收（推荐每次升级后执行）
+
+```powershell
+python scripts\acceptance_full_day.py --archive D:\data\BTCUSDT-aggTrades-2024-06-01.zip `
+    --checksum D:\data\BTCUSDT-aggTrades-2024-06-01.zip.zip --workdir C:\ftdi_acceptance
+```
+
+在一个**新目录**里跑完整链路，包括：两种顺序的归档与压缩、生产端重启重发、篡改检测、旧程序写入拦截、恢复一致性。
+最后打印 `ACCEPTANCE PASS`，证据保存在 `C:\ftdi_acceptance\acceptance_evidence.json`。
+全天数据在固态硬盘上约 20 分钟，占用约 3 GB；输入的 ZIP 只读，跑前跑后会核对哈希。跑完后可以删除 workdir。
+
+## 6. 时钟证据分析（Task 003）
+
+```powershell
+python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.sqlite3>
+```
+
+只读分析实时采集数据库里的时间戳。在没有时钟偏差模型时，**不输出任何延迟或 P99**。
+之前那次 200 条试采中，199 个负值是本机时钟比交易所慢约 0.6 秒造成的，不是"负延迟"。
+
+## 7. 安全规则（产品内置，不要绕过）
+
+- 只读行情：不下单、不需要也不接受任何 API Key。
+- 只用本机 127.0.0.1 HTTP，不要暴露到局域网或公网。
+- 原始 ZIP、源 JSONL、归档文件是证据：程序只读不改，归档永不自动删除。
+- 缺口、冲突、篡改、容量耗尽一律**失败闭锁**，宁可停下也不报假"完整"。
+- 审计期间任何证据文件发生变化，结论一律不是 `COMPLETE`。
+
+## 8. 常见问题
+
+| 现象 | 处理 |
+|---|---|
+| 投递很慢 | 把 `runs\`、消费端数据库放到固态硬盘；用 `--batch 1024` |
+| `SNAPSHOT_UNVERIFIABLE`（WAL 存在但缺 `-shm`） | 复制数据库时要连同 `-wal`、`-shm` 一起复制；或先用写入它的程序正常打开并关闭一次，再审计 |
+| `CONCURRENT_MODIFICATION_DETECTED` | 审计期间有程序在写数据；停掉投递/归档后重跑审计 |
+| `ARCHIVE_PATH_RELOCATED` | 运行目录被整体搬动过；确认无误后加 `--allow-relocated-archives`（只读新位置，永不读旧路径） |
+| 压缩被拒绝 | 按提示处理：有缺口、生产端尚未确认、段过大（调小 `--segment-size`）、目录是链接等 |
+
+## 9. 不能宣称的事实
+
+- 不是生产系统；没有 24 小时在线稳定性、真实网络 P99、断电灾备认证。
+- `COMPLETE` 只证明所提供区间内的本地证据链一致，不证明首个序号之前的数据完整，也不是交易所的完整性认证。
+- 无法防御能同时改写源文件、生产端、归档和消费端全部证据的人（没有签名或只读存储）。
+- 实时行情接入尚未包含在本版本中。
+
+## 10. 文档索引
+
+| 文档 | 内容 |
+|---|---|
+| `RELEASE_NOTES_v0.3.0.md` | 本版本变化 |
+| `docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
+| `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |
+| `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |
+| `docs/TASK003_TIME_PROVENANCE_DESIGN.md` | 时间溯源规则 |
+| `docs/REAL_ARCHIVE_AUDIT_RESULTS.md` / `docs/REAL_CONSUMER_RETENTION_RESULTS.md` | 全天真实数据证据 |
+| `docs/ADRS.md` | 架构决策记录（ADR-001…009） |

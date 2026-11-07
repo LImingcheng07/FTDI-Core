@@ -16,6 +16,7 @@ from .archive_e2e import reconcile_archive_aware
 from .retention_plan import plan_consumer_retention
 from .timeprov import analyze_pilot_db
 from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate_consumer
+from .producer_retention import archive_producer
 
 
 def _resolve_lane(args):
@@ -83,6 +84,14 @@ def main(argv=None) -> int:
     g.add_argument('--producer-root',type=Path,help='Run root whose producer ACK window bounds the watermark')
     g.add_argument('--margin',type=int,default=0,help='Extra events kept below the proposed watermark')
     g.add_argument('--report',type=Path,help='Write the JSON plan here (atomic). Default: stdout only')
+    w = sub.add_parser('archive-producer',
+                       help='Archive the receipted, acknowledged producer prefix to verified gzip segments; dry run unless --apply')
+    w.add_argument('--outdir',type=Path,required=True)
+    w.add_argument('--lane',required=True,help='Registry alias, e.g. BTC')
+    w.add_argument('--consumer-db',type=Path,required=True,help='Independent consumer DB providing the receipts')
+    w.add_argument('--limit',type=int,default=20000,help='At most this many events in this run (default 20000)')
+    w.add_argument('--chunk',type=int,default=20000,help='Events per archive segment, 1..20000')
+    w.add_argument('--apply',action='store_true',help='Perform the archive (default: dry run, writes nothing)')
     r = sub.add_parser('consumer-retention', help='Consumer retention v2 (Task 002): migrate / compact / rehydrate; dry run unless --apply')
     rs = r.add_subparsers(dest='action', required=True)
     for action in ('migrate', 'compact', 'rehydrate'):
@@ -122,6 +131,10 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'archive-producer':
+            result = archive_producer(args.outdir,args.lane,consumer_db=args.consumer_db,limit=args.limit,
+                                      apply=args.apply,chunk=args.chunk)
+            good = True
         elif args.cmd == 'consumer-retention':
             result = _consumer_retention(args)
             good = True

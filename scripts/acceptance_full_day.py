@@ -8,8 +8,9 @@ The ZIP is only read; its SHA-256 is compared before and after. Everything else 
 work directory (about 3 GB for a full day). Nothing is sent anywhere except 127.0.0.1. Exit 0 = all checks
 passed; evidence: <workdir>/acceptance_evidence.json.
 
-Checks: prepare -> replay -> two-process lab-e2e -> producer archive (300k) -> consumer retention v2
-compaction (500k) -> producer archive completed with digest receipts (500k) -> audit-e2e-archive COMPLETE ->
+Checks: prepare -> replay -> two-process lab-e2e -> archive-producer dry run + apply (300k, hot-row receipts) ->
+consumer retention v2 compaction (500k) -> archive-producer completed with digest receipts (500k) ->
+audit-e2e-archive COMPLETE ->
 restarted producer resends everything (0 new effects) -> tamper and legacy-writer refusals -> rehydration
 identical to the original consumer table.
 """
@@ -39,16 +40,17 @@ def sha_file(path):
     return digest.hexdigest()
 
 
-def run(label, args, expect=0, module='ftdi_core'):
+def run(label, args, expect=0):
     started = time.perf_counter()
-    done = subprocess.run([PY, '-m', module, *args], cwd=PROJECT, capture_output=True, text=True)
+    done = subprocess.run([PY, '-m', 'ftdi_core', *args], cwd=PROJECT, capture_output=True, text=True)
     step = {'step': label, 'rc': done.returncode, 'wall_s': round(time.perf_counter() - started, 2)}
     try:
         out = json.loads(done.stdout)
     except ValueError:
         out = None
     if isinstance(out, dict):
-        for key in ('status', 'pass', 'complete', 'rows', 'audit_mode', 'archived_total', 'archived_new'):
+        for key in ('status', 'pass', 'complete', 'rows', 'audit_mode', 'archived_total', 'archived_new',
+                    'would_archive', 'receipts', 'stopped'):
             if key in out:
                 step[key] = out[key]
         if 'issue_counts' in out:
@@ -101,18 +103,33 @@ def finish(ok, reason=None):
     raise SystemExit(0 if summary['result'] == 'PASS' else 1)
 
 
-def prune(run_root, consumer, target, archived):
-    """Archive the producer up to `target` events, starting from `archived` already archived."""
-    while archived < target:
-        limit = min(20000, target - archived)
-        out = run(f'producer archive (+{limit})', ['--outdir', str(run_root), '--lane', 'BTC', '--mode', 'archive',
-                                                   '--limit', str(limit), '--consumer-db', str(consumer)],
-                  module='ftdi_core.adapters.s070041.retention')
-        if not out.get('archived_new'):
-            fail('producer archive made no progress (missing receipts or unacknowledged events)')
-        archived = out['archived_total']
-    return archived
+def prune(run_root, consumer, target, archived, receipt_kind):
+    """Archive the producer from `archived` up to `target` events: Core dry run first, then --apply."""
+    want = target - archived
+    base = ['archive-producer', '--outdir', str(run_root), '--lane', 'BTC', '--consumer-db', str(consumer),
+            '--limit', str(want)]
+    files_before = sorted(p.name for p in (run_root / 'archives').rglob('*')) if (run_root / 'archives').exists() else []
+    plan = run(f'archive-producer dry run ({want})', base)
+    files_after = sorted(p.name for p in (run_root / 'archives').rglob('*')) if (run_root / 'archives').exists() else []
+    check(f'archive-producer dry run plans {want} events, all receipted by {receipt_kind}, changes nothing',
+          plan['would_archive'] == want and plan['receipts'][receipt_kind] == want and not plan['changed'] and
+          files_before == files_after, plan['receipts'])
+    out = run(f'archive-producer --apply ({want})', [*base, '--apply'])
+    check(f'archive-producer archived exactly {want} events', out['archived_new'] == want and
+          out['stopped'] == 'LIMIT_REACHED', {'archived_total': out['archived_total'], 'stopped': out['stopped']})
+    return out['archived_total']
 
+
+def git(*argv):
+    try:
+        done = subprocess.run(['git', *argv], cwd=PROJECT, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+sys.path.insert(0, str(PROJECT))
+from ftdi_core import __version__  # noqa: E402
 
 parser = argparse.ArgumentParser(description='FTDI-Core v0.3 full-day acceptance (read-only input)')
 parser.add_argument('--archive', type=Path, required=True)
@@ -123,8 +140,10 @@ ARCHIVE, WORK = args.archive.resolve(), args.workdir.resolve()
 if WORK.exists():
     raise SystemExit(f'--workdir must not exist yet: {WORK}')
 WORK.mkdir(parents=True)
+dirty = git('status', '--porcelain')
 summary.update(started=time.strftime('%Y-%m-%d %H:%M:%S'), zip_sha256_before=sha_file(ARCHIVE),
-               python=sys.version.split()[0], sqlite=sqlite3.sqlite_version)
+               python=sys.version.split()[0], sqlite=sqlite3.sqlite_version, ftdi_core_version=__version__,
+               git_commit=git('rev-parse', 'HEAD'), git_tree_clean=None if dirty is None else dirty == '')
 prepared, run_root, restarted = WORK / 'prepared', WORK / 'run', WORK / 'run_restart'
 consumer = WORK / 'consumer' / 'effects.sqlite3'
 consumer.parent.mkdir()
@@ -144,7 +163,7 @@ check('all events delivered', original_rows == records, original_rows)
 keep_hot = min(54_441, records // 10)
 compact_n = records - keep_hot
 first_archive = compact_n * 3 // 5
-archived_so_far = prune(run_root, consumer, first_archive, 0)
+archived_so_far = prune(run_root, consumer, first_archive, 0, 'consumer_hot_rows')
 old = run('v0.2 audit-e2e refuses the archived prefix', ['audit-e2e', '--outdir', str(run_root), '--consumer-db',
                                                          str(consumer)], expect=2)
 check('v0.2 refusal unchanged', old['metrics']['archived_records_unsupported'] == first_archive)
@@ -158,7 +177,7 @@ run('consumer-retention compact (dry run)', ['consumer-retention', 'compact', '-
 run('consumer-retention compact --apply', ['consumer-retention', 'compact', '--consumer-db', str(consumer), '--lane',
                                            'BTC', '--producer-root', str(run_root), '--watermark', str(watermark),
                                            '--apply'])
-archived_so_far = prune(run_root, consumer, compact_n, archived_so_far)   # rest receipted by consumer digests
+archived_so_far = prune(run_root, consumer, compact_n, archived_so_far, 'consumer_digests')
 check('producer archive stops at the target', archived_so_far == compact_n, archived_so_far)
 audit = run('audit-e2e-archive (producer and consumer compacted)', ['audit-e2e-archive', '--outdir', str(run_root),
                                                                     '--consumer-db', str(consumer)])
@@ -183,7 +202,6 @@ bad = run('tampered consumer segment', ['audit-e2e-archive', '--outdir', str(run
                                         str(tamper / consumer.name)], expect=2)
 check('tampering detected', 'CONSUMER_SEGMENT_SHA256_MISMATCH' in bad['issue_counts'])
 
-sys.path.insert(0, str(PROJECT))
 from ftdi_core.adapters.s070041.external_delivery import EffectStore, envelope  # noqa: E402
 legacy = WORK / 'legacy'
 shutil.copytree(consumer.parent, legacy)

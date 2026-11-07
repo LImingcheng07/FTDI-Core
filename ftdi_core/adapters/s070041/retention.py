@@ -112,6 +112,39 @@ def export_gzip(path,items):
     return checksum
 
 
+def check_receipts(consumer_db,items):
+    """A local publisher ACK is insufficient evidence for deletion: every archived published event needs an
+    independent consumer receipt. Read-only. Returns (hot_rows, digest_rows); raises on any missing receipt."""
+    if consumer_db is None or not Path(consumer_db).is_file():
+        raise ValueError('Verified independent --consumer-db is required before any prune')
+    read_uri=Path(consumer_db).resolve().as_uri()+'?mode=ro'
+    with closing(sqlite3.connect(read_uri,uri=True)) as receipts:
+        return count_receipts(receipts,items)
+
+
+def count_receipts(receipts,items):
+    """Receipt rule on an open consumer connection (see check_receipts)."""
+    from .external_delivery import event_identity
+    hot=digest=0
+    # Core divergence from reference_s07_0041 (ADR-007 phase 2): a consumer compacted with retention v2
+    # keeps compacted identities as digest rows; an identical digest is an equally independent receipt.
+    tiered=receipts.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='effect_digests'").fetchone()
+    for item in items:
+        if 'outbox' in item:
+            o=item['outbox']
+            eid=event_identity(o['lane'],o['seq'],0,o['raw_sha256'])
+            if receipts.execute('SELECT 1 FROM effects WHERE event_id=?',(eid,)).fetchone():
+                hot+=1
+                continue
+            row=receipts.execute('SELECT d.payload_sha256 FROM effect_digests d JOIN lane_ids l '
+                                 'ON l.lane_id=d.lane_id WHERE l.lane=? AND d.epoch=0 AND d.seq=?',
+                                 (o['lane'],o['seq'])).fetchone() if tiered else None
+            if row is None or not isinstance(row[0],bytes) or row[0].hex()!=o['raw_sha256']:
+                raise ValueError('Independent consumer receipt missing; refuse prune')
+            digest+=1
+    return hot,digest
+
+
 def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=None):
     if limit<1 or limit>20000:raise ValueError('limit must be 1..20000')
     db,reg=connect_db(root,alias)
@@ -123,27 +156,7 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
         old_size=(root/'lanes'/alias/'state.sqlite3').stat().st_size
         if not items:
             return {'lane':alias,'archived_new':0,'archived_total':start,'blocked':True,'db_bytes':old_size}
-        # A local publisher ACK is insufficient evidence for deletion: require
-        # independent consumer receipts for every archived published event.
-        if consumer_db is None or not Path(consumer_db).is_file():
-            raise ValueError('Verified independent --consumer-db is required before any prune')
-        from .external_delivery import event_identity
-        read_uri=Path(consumer_db).resolve().as_uri()+'?mode=ro'
-        with closing(sqlite3.connect(read_uri,uri=True)) as receipts:
-            # Core divergence from reference_s07_0041 (ADR-007 phase 2): a consumer compacted with retention v2
-            # keeps compacted identities as digest rows; an identical digest is an equally independent receipt.
-            tiered=receipts.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='effect_digests'").fetchone()
-            for item in items:
-                if 'outbox' in item:
-                    o=item['outbox']
-                    eid=event_identity(o['lane'],o['seq'],0,o['raw_sha256'])
-                    if receipts.execute('SELECT 1 FROM effects WHERE event_id=?',(eid,)).fetchone():
-                        continue
-                    row=receipts.execute('SELECT d.payload_sha256 FROM effect_digests d JOIN lane_ids l '
-                                         'ON l.lane_id=d.lane_id WHERE l.lane=? AND d.epoch=0 AND d.seq=?',
-                                         (o['lane'],o['seq'])).fetchone() if tiered else None
-                    if row is None or not isinstance(row[0],bytes) or row[0].hex()!=o['raw_sha256']:
-                        raise ValueError('Independent consumer receipt missing; refuse prune')
+        check_receipts(consumer_db,items)
         end=start+len(items)   # half-open
         archive=root/'archives'/alias/f'raw_{start:012d}_{end:012d}.jsonl.gz'
         checksum=export_gzip(archive,items)
