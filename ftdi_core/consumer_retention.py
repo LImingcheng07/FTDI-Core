@@ -27,7 +27,7 @@ import sqlite3
 from .adapters.s070041.durable_stream import canonical
 from .adapters.s070041.external_delivery import Conflict, EffectStore, batch_digest, validate
 from .archive_e2e import (EFFECT_COLUMNS, ArchiveLimits, _effect_valid, _gzip_lines, _load_registry,
-                          _plain_table, _Reject, _Snapshot, _Unopenable)
+                          _plain_table, _redirected, _Reject, _Snapshot, _Unopenable)
 
 SCHEMA_V2 = 'FTDI-Consumer-v2'
 CHAIN_TAG = 'FTDI-Consumer-Segment-v1'
@@ -47,6 +47,8 @@ V2_COLUMNS = {
 TRIGGER_SQL = (f"CREATE TRIGGER {TRIGGER_NAME} BEFORE INSERT ON effects "
                "WHEN EXISTS (SELECT 1 FROM retention_state r WHERE r.lane = NEW.lane AND r.epoch = NEW.epoch "
                "AND NEW.seq BETWEEN r.first_seq AND r.content_watermark) "
+               "OR EXISTS (SELECT 1 FROM lane_ids l JOIN effect_digests d ON d.lane_id = l.lane_id "
+               "WHERE l.lane = NEW.lane AND d.epoch = NEW.epoch AND d.seq = NEW.seq) "
                "BEGIN SELECT RAISE(ABORT, 'FTDI: insert into a compacted range'); END")
 DDL = [
     'CREATE TABLE consumer_meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)',
@@ -121,6 +123,25 @@ def parse_segment(data, *, lane, epoch, start_seq, end_seq, limits=None):
     if expected != end_seq + 1:
         raise _Reject('CONSUMER_SEGMENT_RECORD_INVALID', reason='record count differs from the manifest range')
     return rows
+
+
+def validate_segment_bytes(data, *, lane, epoch, start_seq, end_seq, limits=None):
+    """Refuse a segment that the bounded audit/rehydrate reader could not read back."""
+    limits = limits or ArchiveLimits()
+    if len(data) > limits.max_compressed_bytes:
+        raise ValueError(f'segment [{start_seq}, {end_seq}] would be {len(data)} compressed bytes, above the '
+                         f'{limits.max_compressed_bytes}-byte audit limit; use a smaller segment_size')
+    try:
+        parse_segment(data, lane=lane, epoch=epoch, start_seq=start_seq, end_seq=end_seq, limits=limits)
+    except _Reject as rejection:
+        raise ValueError(f'segment [{start_seq}, {end_seq}] would not be readable under the audit limits: '
+                         f'{rejection.code} {rejection.detail}') from None
+
+
+def _confined(directory):
+    """Refuse an archive directory reached through a symlink/junction (writes must stay in the archive root)."""
+    if os.path.lexists(directory) and _redirected(directory):
+        raise ValueError(f'archive directory is redirected (symlink/junction): {directory}')
 
 
 def v1_problem(db):
@@ -328,8 +349,12 @@ def compact_consumer(consumer_db, *, lane, epoch=0, content_watermark, producer_
             chunk = _check_range(snap.conn, lane, epoch, start, end)
             rows += len(chunk)
             payload_bytes += sum(len(r['payload']) for r in chunk)
+            data = segment_bytes(chunk)
+            validate_segment_bytes(data, lane=lane, epoch=epoch, start_seq=start, end_seq=end)
             target = archive_root(path) / segment_relative_path(lane_id, epoch, start, end)
-            if os.path.lexists(target) and (not target.is_file() or target.read_bytes() != segment_bytes(chunk)):
+            _confined(archive_root(path))
+            _confined(target.parent)
+            if os.path.lexists(target) and (not target.is_file() or target.read_bytes() != data):
                 raise ValueError(f'existing archive file has different content: {target.name}')
     finally:
         snap.close()
@@ -344,8 +369,9 @@ def compact_consumer(consumer_db, *, lane, epoch=0, content_watermark, producer_
     written = []
     db = _writer(path)
     try:
+        lane_id = _allocate_lane_id(db, lane)
         for start, end in chunks:
-            written.append(_compact_segment(db, path, lane, epoch, start, end, crash_stage))
+            written.append(_compact_segment(db, path, lane, epoch, start, end, lane_id, crash_stage))
     finally:
         db.close()
     final = written[-1]
@@ -354,18 +380,31 @@ def compact_consumer(consumer_db, *, lane, epoch=0, content_watermark, producer_
             'chain_head': final['chain'], 'producer_window': producer}
 
 
-def _compact_segment(db, path, lane, epoch, start, end, crash_stage):
+def _allocate_lane_id(db, lane):
+    """Committed on its own: a crash after a segment file is written cannot hand this id to another lane."""
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        row = db.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
+        lane_id = row['lane_id'] if row else db.execute('INSERT INTO lane_ids(lane) VALUES (?)', (lane,)).lastrowid
+        db.execute('COMMIT')
+    except BaseException:
+        if db.in_transaction:
+            db.execute('ROLLBACK')
+        raise
+    return lane_id
+
+
+def _compact_segment(db, path, lane, epoch, start, end, lane_id, crash_stage):
     db.execute('BEGIN IMMEDIATE')
     try:
         state = db.execute('SELECT * FROM retention_state WHERE lane = ? AND epoch = ?', (lane, epoch)).fetchone()
         expected_start = state['content_watermark'] + 1 if state else start
-        if v2_problem(db) or expected_start != start:
+        lane_row = db.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
+        if v2_problem(db) or expected_start != start or lane_row is None or lane_row['lane_id'] != lane_id:
             raise ValueError('consumer changed concurrently; compaction aborted')
         rows = _check_range(db, lane, epoch, start, end)
-        lane_row = db.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
-        lane_id = lane_row['lane_id'] if lane_row else db.execute(
-            'INSERT INTO lane_ids(lane) VALUES (?)', (lane,)).lastrowid
         data = segment_bytes(rows)
+        validate_segment_bytes(data, lane=lane, epoch=epoch, start_seq=start, end_seq=end)
         sha = hashlib.sha256(data).hexdigest()
         relative = segment_relative_path(lane_id, epoch, start, end)
         final = archive_root(path) / relative
@@ -400,11 +439,14 @@ def _compact_segment(db, path, lane, epoch, start, end, crash_stage):
 
 def _write_segment_file(final, data, lane, epoch, start, end):
     """Write, fsync and re-verify; reuse an identical existing file (crash retry), refuse a different one."""
-    if final.exists():
-        if not final.is_file() or final.read_bytes() != data:
-            raise ValueError(f'existing archive file has different content: {final.name}')
-        return
+    root = final.parent.parent
+    _confined(root)
     final.parent.mkdir(parents=True, exist_ok=True)
+    _confined(final.parent)
+    if os.path.lexists(final):
+        if os.path.islink(final) or not final.is_file() or final.read_bytes() != data:
+            raise ValueError(f'existing archive file has different content: {final.name}')
+        return                                      # identical bytes, already validated by the caller
     temporary = final.with_name(final.name + '.tmp')
     with open(temporary, 'wb') as handle:
         handle.write(data)
@@ -446,15 +488,32 @@ def _verified_segments(db, path, lane, epoch, state):
     return lane_row['lane_id'], segments
 
 
-def _segment_rows(path, lane, epoch, seg):
+def _segment_rows(path, lane, epoch, seg, limits=None):
+    limits = limits or ArchiveLimits()
     file = archive_root(path) / seg['relative_path']
-    data = file.read_bytes()
+    _confined(archive_root(path))
+    _confined(file.parent)
+    if os.path.islink(file) or not file.is_file():
+        raise ValueError(f'archive segment missing or not a regular file: {seg["relative_path"]}')
+    if file.stat().st_size > limits.max_compressed_bytes:
+        raise ValueError(f'archive segment exceeds the {limits.max_compressed_bytes}-byte limit')
+    with open(file, 'rb') as handle:
+        data = handle.read(limits.max_compressed_bytes + 1)
     if hashlib.sha256(data).hexdigest() != seg['sha256']:
         raise ValueError(f'archive segment SHA-256 mismatch: {seg["relative_path"]}')
     try:
-        return parse_segment(data, lane=lane, epoch=epoch, start_seq=seg['start_seq'], end_seq=seg['end_seq'])
+        return parse_segment(data, lane=lane, epoch=epoch, start_seq=seg['start_seq'], end_seq=seg['end_seq'],
+                             limits=limits)
     except _Reject as rejection:
         raise ValueError(f'archive segment unreadable: {rejection.code} {rejection.detail}') from None
+
+
+def _check_digests(db, lane_id, epoch, rows):
+    for row in rows:
+        found = db.execute('SELECT payload_sha256 FROM effect_digests WHERE lane_id = ? AND epoch = ? AND seq = ?',
+                           (lane_id, epoch, row['seq'])).fetchone()
+        if found is None or not isinstance(found[0], bytes) or found[0].hex() != row['payload_sha256']:
+            raise ValueError(f'digest tier disagrees with the archive at seq {row["seq"]}')
 
 
 def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=False):
@@ -474,8 +533,8 @@ def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=F
         boundaries = {state['first_seq'] - 1} | {seg['end_seq'] for seg in segments}
         target = max(b for b in boundaries if b <= requested)   # round down: restore at least what was asked
         restore = [seg for seg in reversed(segments) if seg['start_seq'] > target]
-        for seg in restore:
-            _segment_rows(path, lane, epoch, seg)            # verify every file before changing anything
+        for seg in restore:                              # verify files AND digests before changing anything
+            _check_digests(snap.conn, lane_id, epoch, _segment_rows(path, lane, epoch, seg))
     finally:
         snap.close()
     plan = [{'start_seq': s['start_seq'], 'end_seq': s['end_seq'], 'record_count': s['record_count']} for s in restore]
@@ -493,22 +552,18 @@ def rehydrate_consumer(consumer_db, *, lane, epoch=0, to_watermark=None, apply=F
                 if current is None or current['content_watermark'] != seg['end_seq'] or current['chain_head'] != seg['chain']:
                     raise ValueError('consumer changed concurrently; rehydration aborted')
                 rows = _segment_rows(path, lane, epoch, seg)
-                for row in rows:
-                    found = db.execute('SELECT payload_sha256 FROM effect_digests WHERE lane_id = ? AND epoch = ? '
-                                       'AND seq = ?', (lane_id, epoch, row['seq'])).fetchone()
-                    if found is None or bytes(found[0]).hex() != row['payload_sha256']:
-                        raise ValueError(f'digest tier disagrees with the archive at seq {row["seq"]}')
+                _check_digests(db, lane_id, epoch, rows)
                 if seg['start_seq'] - 1 < current['first_seq']:
                     db.execute('DELETE FROM retention_state WHERE lane = ? AND epoch = ?', (lane, epoch))
                 else:
                     db.execute('UPDATE retention_state SET content_watermark = ?, segments = segments - 1, '
                                'chain_head = ? WHERE lane = ? AND epoch = ?',
                                (seg['start_seq'] - 1, seg['prev_chain'], lane, epoch))
+                db.execute('DELETE FROM effect_digests WHERE lane_id = ? AND epoch = ? AND seq BETWEEN ? AND ?',
+                           (lane_id, epoch, seg['start_seq'], seg['end_seq']))
                 db.executemany('INSERT INTO effects(event_id, lane, seq, epoch, payload_sha256, payload) '
                                'VALUES (?, ?, ?, ?, ?, ?)',
                                [tuple(row[k] for k in EFFECT_COLUMNS) for row in rows])
-                db.execute('DELETE FROM effect_digests WHERE lane_id = ? AND epoch = ? AND seq BETWEEN ? AND ?',
-                           (lane_id, epoch, seg['start_seq'], seg['end_seq']))
                 db.execute('DELETE FROM effect_segments WHERE lane = ? AND epoch = ? AND start_seq = ?',
                            (lane, epoch, seg['start_seq']))
                 db.execute('COMMIT')
@@ -536,24 +591,28 @@ class TieredEffectStore(EffectStore):
             v2 = has_v2_objects(self.db)
             states = {}
             for event_id, lane, seq, epoch, digest, payload in rows:
-                state = None
                 if v2:
                     if (lane, epoch) not in states:
-                        states[(lane, epoch)] = self.db.execute(
-                            'SELECT r.first_seq, r.content_watermark, l.lane_id FROM retention_state r '
-                            'LEFT JOIN lane_ids l ON l.lane = r.lane WHERE r.lane = ? AND r.epoch = ?',
-                            (lane, epoch)).fetchone()
-                    state = states[(lane, epoch)]
-                if state is not None and state['first_seq'] <= seq <= state['content_watermark']:
-                    found = None if state['lane_id'] is None else self.db.execute(
+                        state = self.db.execute('SELECT first_seq, content_watermark FROM retention_state '
+                                                'WHERE lane = ? AND epoch = ?', (lane, epoch)).fetchone()
+                        lane_row = self.db.execute('SELECT lane_id FROM lane_ids WHERE lane = ?', (lane,)).fetchone()
+                        states[(lane, epoch)] = (state, lane_row['lane_id'] if lane_row else None)
+                    state, lane_id = states[(lane, epoch)]
+                    in_range = state is not None and state['first_seq'] <= seq <= state['content_watermark']
+                    found = None if lane_id is None else self.db.execute(
                         'SELECT payload_sha256 FROM effect_digests WHERE lane_id = ? AND epoch = ? AND seq = ?',
-                        (state['lane_id'], epoch, seq)).fetchone()
-                    if found is None:
-                        raise TierIntegrityError(f'compacted digest missing for lane={lane}, seq={seq}')
-                    if bytes(found[0]).hex() != digest:
-                        raise Conflict(f'Conflicting event for lane={lane}, seq={seq} (compacted tier)')
-                    duplicated += 1
-                    continue
+                        (lane_id, epoch, seq)).fetchone()
+                    # A digest row alone proves the identity was applied, even if retention_state is damaged.
+                    if in_range or found is not None:
+                        if not in_range:
+                            raise TierIntegrityError(f'digest exists outside the compacted range for lane={lane}, '
+                                                     f'seq={seq}: retention state inconsistent')
+                        if found is None:
+                            raise TierIntegrityError(f'compacted digest missing for lane={lane}, seq={seq}')
+                        if not isinstance(found[0], bytes) or found[0].hex() != digest:
+                            raise Conflict(f'Conflicting event for lane={lane}, seq={seq} (compacted tier)')
+                        duplicated += 1
+                        continue
                 old = self.db.execute('SELECT event_id, payload_sha256 FROM effects WHERE lane = ? AND seq = ? '
                                       'AND epoch = ?', (lane, seq, epoch)).fetchone()
                 if old is not None:

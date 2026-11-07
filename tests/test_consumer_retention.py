@@ -666,7 +666,14 @@ class ConsumerRetentionContractTests(unittest.TestCase):
         self.crash("after_segment_file")
         # A normal open performs crash recovery before comparing logical state.
         self.assertEqual(effects(self.f.consumer), self.original)
-        self.assertEqual(database_rows(self.f.consumer), before)
+        # Contract §3 (after review finding R6): the lane id is committed on its own before any segment file
+        # exists, so a crash cannot hand that id to another lane. Nothing else may have changed.
+        before_schema, before_rows = before
+        after_schema, after_rows = database_rows(self.f.consumer)
+        self.assertEqual(after_schema, before_schema)
+        self.assertEqual(before_rows.pop("lane_ids"), [])
+        self.assertEqual(len(after_rows.pop("lane_ids")), 1)
+        self.assertEqual(after_rows, before_rows)
         files = list(archive_root(self.f.consumer).rglob("*.jsonl.gz"))
         self.assertEqual(len(files), 1)
         orphan = files[0].read_bytes()

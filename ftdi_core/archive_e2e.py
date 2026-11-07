@@ -751,11 +751,12 @@ class _Auditor:
                 expected, prev = end + 1, seg['chain']
                 canonical_path = (cr.segment_relative_path(tier['lane_id'], epoch, start, end)
                                   if tier['lane_id'] is not None else None)
-                if seg['relative_path'] != canonical_path or redirected:
+                file = root / canonical_path if canonical_path is not None else None
+                if (seg['relative_path'] != canonical_path or redirected
+                        or (file is not None and os.path.lexists(file.parent) and _redirected(file.parent))):
                     bad('CONSUMER_SEGMENT_PATH_INVALID', start_seq=start, relative_path=seg['relative_path'])
                     continue
                 registered.add(canonical_path)
-                file = root / canonical_path
                 data, problem = self._read_archive_file(owner, file, 'consumer segment')
                 if problem:
                     mapped = {'ARCHIVE_SEGMENT_MISSING': 'CONSUMER_SEGMENT_MISSING',
@@ -804,14 +805,22 @@ class _Auditor:
             findings.add('CONSUMER_DIGEST_EXTRA', reason='digest rows without retention_state', count=stray_digests)
         if os.path.isdir(root) and not redirected:
             seen = 0
-            for file in sorted(root.rglob('*')):
-                seen += 1
-                if seen > self.limits.max_archive_dir_entries:
-                    findings.add('CONSUMER_SEGMENT_PATH_INVALID', reason='consumer archive has too many entries')
-                    break
-                relative = file.relative_to(root).as_posix()
-                if file.is_file() and relative not in registered:
-                    findings.add('UNREFERENCED_CONSUMER_SEGMENT_FILE', file=relative)
+            for directory in sorted(root.iterdir()):     # never descend through a link/junction
+                entries = [directory] if not directory.is_dir() or os.path.islink(directory) else []
+                if directory.is_dir() and _redirected(directory):
+                    findings.add('CONSUMER_SEGMENT_PATH_INVALID', reason='redirected archive directory',
+                                 directory=directory.name)
+                    continue
+                if not entries:
+                    entries = sorted(directory.iterdir())
+                for file in entries:
+                    seen += 1
+                    if seen > self.limits.max_archive_dir_entries:
+                        findings.add('CONSUMER_SEGMENT_PATH_INVALID', reason='consumer archive has too many entries')
+                        break
+                    relative = file.relative_to(root).as_posix()
+                    if relative not in registered:
+                        findings.add('UNREFERENCED_CONSUMER_SEGMENT_FILE', file=relative)
 
     def _expect(self, lane, event, origin, delivered):
         """One published event: dedup by market seq, then compare with the consumer."""

@@ -35,11 +35,14 @@ CREATE TABLE effect_segments(
 CREATE TRIGGER effects_guard_compacted BEFORE INSERT ON effects
 WHEN EXISTS (SELECT 1 FROM retention_state r WHERE r.lane = NEW.lane AND r.epoch = NEW.epoch
              AND NEW.seq BETWEEN r.first_seq AND r.content_watermark)
+  OR EXISTS (SELECT 1 FROM lane_ids l JOIN effect_digests d ON d.lane_id = l.lane_id
+             WHERE l.lane = NEW.lane AND d.epoch = NEW.epoch AND d.seq = NEW.seq)
 BEGIN SELECT RAISE(ABORT, 'FTDI: insert into a compacted range'); END;
 ```
 
 The trigger makes **any** writer (including the S07 adapter or the frozen reference consumer) fail instead
-of inserting a second effect for a compacted identity.
+of inserting a second effect for a compacted identity; it also fires when only the digest row survives (a
+damaged `retention_state` must not re-open a compacted identity).
 
 ## 2. Archive layout and record format
 
@@ -81,6 +84,10 @@ TierIntegrityError(Exception)    # raised by accept() when a compacted tier cann
   not registered there; an existing segment file with the target name has different bytes (checked for
   every planned segment before anything is written, also in a dry run); `epoch != 0`.
   `lane` is the exact lane scope string (JSON array text, as stored in `effects.lane`).
+- Every planned segment must be readable by the bounded audit reader (`ArchiveLimits` defaults: compressed
+  size, decompressed size, line length, records); otherwise the operation is refused before anything is
+  written (dry run included). Archive directories reached through a symlink/junction are refused.
+- The lane id is allocated in its own committed transaction before any segment file is written.
 - Apply procedure per segment, inside one `BEGIN IMMEDIATE` held for the whole segment: read and
   validate rows → write `.tmp`, fsync, re-read and verify every line → `os.replace` to the final name →
   insert digests, segment row, update/insert `retention_state` → delete exactly those `effects` rows →
@@ -89,7 +96,8 @@ TierIntegrityError(Exception)    # raised by accept() when a compacted tier cann
 - `rehydrate_consumer` restores rows from verified segments, newest first, down to `to_watermark`
   (default: everything, i.e. `first_seq - 1`). A `to_watermark` inside a segment is rounded **down** to the
   segment boundary (the resulting C is the largest boundary <= `to_watermark`), so at least the requested
-  range becomes hot again; values outside `[first_seq - 1, C - 1]` are refused. Per segment, in one transaction: lower C to
+  range becomes hot again; values outside `[first_seq - 1, C - 1]` are refused. Every segment to restore is
+  read (bounded, confined) and checked against its digests before the first change. Per segment, in one transaction: lower C to
   `start_seq - 1` (or drop the state row when nothing remains), insert the rows, delete their digests,
   delete the segment row, set `chain_head = prev_chain`. **Archive files are never deleted.** A rehydrated
   `effects` table is row-for-row identical to the pre-compaction table.
@@ -105,6 +113,7 @@ and `Conflict` exception as `EffectStore.accept`, inside one `BEGIN IMMEDIATE`. 
 | lane/epoch has state and `first_seq <= seq <= C`, digest equals | duplicate (no effect) |
 | same, digest differs | `Conflict` (HTTP 409), batch rolled back |
 | same, digest row missing | `TierIntegrityError` (HTTP 503), batch rolled back, nothing ACKed |
+| a digest row exists but `retention_state` does not cover the seq | `TierIntegrityError` (state damaged) |
 | otherwise | exactly v1 behaviour (hot row: duplicate / Conflict / insert) |
 
 On a v1 DB `TieredEffectStore` behaves exactly like `EffectStore`.
