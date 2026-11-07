@@ -8,7 +8,7 @@ SQLite 3.45.1** (not a container). Base commit: `86def0d` (unmodified v0.2 Windo
 
 ```text
 python -W error::ResourceWarning -m unittest discover -s tests -q
-  -> Ran 152 tests ... OK
+  -> Ran 154 tests ... OK
 cd reference_s07_0041 && python -W error::ResourceWarning -m unittest discover -s tests -q
   -> Ran 45 tests ... OK
 ```
@@ -18,8 +18,9 @@ cd reference_s07_0041 && python -W error::ResourceWarning -m unittest discover -
 | Pre-existing Core (v0.2 Windows-ready) | 65 | baseline | OK, unchanged |
 | `tests/test_archive_e2e.py` — black-box contract suite | 48 | Codex, from `docs/ARCHIVE_E2E_AUDIT.md` only, without reading the implementation | OK |
 | `tests/test_archive_e2e_internals.py` — injection/hostile-input tests needing implementation knowledge | 25 | Claude | OK |
-| `tests/test_archive_e2e_review.py` — regressions for review findings C1–C8 | 14 | Claude | OK |
-| **Core total** | **152** | | **OK** |
+| `tests/test_archive_e2e_review.py` — regressions for review findings C1–C8 and the real-data cascade fix | 15 | Claude | OK |
+| `tests/test_provenance_constants.py` — full ZIP SHA-256 pinned (truncated copies found) | 1 | Claude | OK |
+| **Core total** | **154** | | **OK** |
 | Frozen S07-004.1 compatibility (`reference_s07_0041/`) | 45 | baseline | OK, unchanged |
 
 Unchanged by this task (verified with `git status`): `reference_s07_0041/`, `ftdi_core/adapters/`,
@@ -63,7 +64,12 @@ Legitimate data confirmed `COMPLETE` (no false positives): out-of-order market s
 archive boundary, CRLF sources, sources without a final newline, legitimate duplicate lines (resident
 and archived), multi-lane runs, WAL databases with an existing `-shm`, relocated roots with the explicit flag.
 
-## Scale (synthetic data; the real 554,441-event ZIP is not bundled)
+## Real data (gate A11)
+
+Full day, owner's original ZIP, 500,000 archived + 54,441 resident: **COMPLETE in 81.1 s, 37.0 MiB peak
+working set**; bit flip and relabel forgery **INCONSISTENT**. Details: `docs/REAL_ARCHIVE_AUDIT_RESULTS.md`.
+
+## Scale (synthetic data)
 
 | Events | Archived / resident | `audit-e2e-archive` wall | Python peak (tracemalloc) | Status |
 |---:|---|---:|---:|---|
@@ -71,13 +77,12 @@ and archived), multi-lane runs, WAL databases with an existing `-shm`, relocated
 | 200,000 | 180,000 / 20,000 (9 segments) | 25.15 s* | 6.9 MiB | COMPLETE |
 
 \* measured before the C1/C2 fixes; the 50k run is after them (~126 µs/event in both cases). Memory
-does not grow with event count (the sequence bitmap is `next_file_index / 8` bytes). Linear
-extrapolation to the full day suggests ~70 s; **this is an extrapolation, not a measurement**. Hot spot:
+does not grow with event count (the sequence bitmap is `next_file_index / 8` bytes). The measured
+full-day real-data audit (81 s) matches the synthetic extrapolation (~70 s). Hot spot:
 `json.dumps` canonicalisation (~12 calls per event), an optimisation candidate.
 
 ## Not verified / limits
 
-- Full-day real archive audit (gate A11) — needs the owner's original ZIP and a run outside this sandbox.
 - UNC network paths (`\\server\share`) are not supported by SQLite URI opening (same as v0.2).
 - Power-loss, disk-full and long-running concurrency are out of scope; concurrency is detected, not prevented.
 - No protection against an actor able to rewrite source, registry, producer DB, archives and consumer DB together.

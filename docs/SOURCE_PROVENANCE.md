@@ -1,6 +1,6 @@
 # Provenance and source isolation
 
-**Original Binance historical archive**: `BTCUSDT-aggTrades-2024-06-01.zip`, SHA-256 `78085fc50146fcd2a228bb95495246c539bacc5cd635268bc8a641ce90e3c9`.
+**Original Binance historical archive**: `BTCUSDT-aggTrades-2024-06-01.zip`, SHA-256 `78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9` (verified 2026-11-07 against the owner's original ZIP and its companion checksum file). Earlier copies of this line, `scripts/build_release.py`, the frozen baseline `PACKAGE_MANIFEST.json` and the handoff note carried a truncated 62-character value; that value is not a SHA-256 and must not be used for comparison.
 
 **Historical record count**: 554,441 BTCUSDT spot aggregate trades for the sampled day in the original archive. The original CSV contains 8 columns; v0.1+ canonicalization retains the previously overlooked eighth field, so the canonical JSONL SHA cannot be compared naively with S07-002's 7-field Windows JSONL fingerprint.
 

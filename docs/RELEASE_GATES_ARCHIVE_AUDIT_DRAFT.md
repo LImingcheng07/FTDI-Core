@@ -16,7 +16,7 @@ Scope: `audit-e2e-archive` (`docs/ARCHIVE_E2E_AUDIT.md`, ADR-006). The v0.2 gate
 | A8 | Crash windows of the S07 prune remain auditable (orphan before commit, after commit) | subprocess crash tests | PASS |
 | A9 | Windows handle hygiene on success, failure and exception paths | `rmtree` immediately after audits; ResourceWarning as error | PASS on native Windows |
 | A10 | Independent verification | 48 black-box tests written from the contract by a separate agent (Codex) without reading the implementation; separate adversarial review found C1–C8, all fixed with regression tests and mutation-checked | PASS (see TEST_REPORT_TASK001.md) |
-| A11 | Real-data scale run: full-day 554,441 events archived and audited `COMPLETE`, plus one deliberate corruption run `INCONSISTENT` | owner runs on the real ZIP (not bundled) | **NOT YET RUN** |
+| A11 | Real-data scale run: full-day 554,441 events archived and audited `COMPLETE`, plus deliberate corruption runs `INCONSISTENT` | owner's original ZIP (read-only, SHA unchanged): 500,000 archived + 54,441 resident COMPLETE in 81 s / 37 MiB; bit flip and relabel forgery INCONSISTENT; relocation needs the flag (`docs/REAL_ARCHIVE_AUDIT_RESULTS.md`) | PASS (2026-11-07, native Windows) |
 | A12 | Version bump, release notes and a new package manifest cut from the release commit | release process | **NOT YET DONE** (candidate manifest only) |
 
 Still blocked for production (unchanged from v0.2): authenticated remote delivery, synchronized

@@ -1310,10 +1310,12 @@ class _Auditor:
         full, rest = divmod(count, 8)
         lane.contiguous = (lane.bitmap[:full] == b'\xff' * full
                            and (rest == 0 or lane.bitmap[full] & ((1 << rest) - 1) == (1 << rest) - 1))
-        if not lane.contiguous:
+        # Only a fully read archive makes the bitmap complete; holes left by unreadable
+        # segments are already explained by their own fatal finding and are not a "gap".
+        if not lane.contiguous and lane.archived_complete:
             self.findings.add('PRODUCER_SEQUENCE_GAP', lane=lane.alias, next_seq=lane.next_seq,
                               published_events=count)
-        lane.first_seq = lane.next_seq - count if count else None
+        lane.first_seq = lane.next_seq - count if count and lane.contiguous else None
 
     def _provenance(self, lane, meta, computed, next_file_index, next_byte_offset):
         findings, alias = self.findings, lane.alias
@@ -1348,7 +1350,7 @@ class _Auditor:
         if matches and document.get('records') != next_file_index:
             findings.add('SOURCE_MANIFEST_MISMATCH', lane=alias, field='records',
                          declared=document.get('records'), lines=next_file_index)
-        if matches and lane.first_seq is not None and (
+        if matches and lane.verifiable and lane.contiguous and lane.first_seq is not None and (
                 document.get('source_seq_first') != lane.first_seq
                 or document.get('source_seq_last') != lane.next_seq - 1):
             findings.add('SOURCE_MANIFEST_MISMATCH', lane=alias, field='source_seq_first/last')

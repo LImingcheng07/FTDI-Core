@@ -7,7 +7,7 @@ You are working on FTDI-Core v0.2 (Python 3.10+, stdlib-only research prototype)
 ## First actions in every session
 1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/DATA_CONTRACT_V1.md and docs/RELEASE_GATES_V02.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 152 after Task 001)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 154 after Task 001)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.
@@ -45,4 +45,4 @@ You are working on FTDI-Core v0.2 (Python 3.10+, stdlib-only research prototype)
 - `scripts/` Windows setup/verification and packaging
 
 ## Current state
-Task 001 (archive-aware E2E audit) is implemented on branch `feat/archive-e2e-audit` (`ftdi_core/archive_e2e.py`); release gates in `docs/RELEASE_GATES_ARCHIVE_AUDIT_DRAFT.md`. Still open: an owner-run full-day real-data archive audit (gate A11), and a release cut with version bump and manifest (A12). Next candidates: `tasks/002` (consumer dedup retention design, design-only until reviewed by the owner because it touches deletion) and `tasks/003` (time provenance).
+Task 001 (archive-aware E2E audit) is implemented on branch `feat/archive-e2e-audit` (`ftdi_core/archive_e2e.py`); release gates in `docs/RELEASE_GATES_ARCHIVE_AUDIT_DRAFT.md`. Full-day real-data audit passed (gate A11, `docs/REAL_ARCHIVE_AUDIT_RESULTS.md`). Still open: a release cut with version bump and manifest (A12). Next candidates: `tasks/002` (consumer dedup retention design, design-only until reviewed by the owner because it touches deletion) and `tasks/003` (time provenance).

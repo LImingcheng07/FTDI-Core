@@ -264,6 +264,7 @@ class InternalsTests(unittest.TestCase):
         result = self.assert_inconsistent(self.audit(), 'ARCHIVE_SHA256_MISMATCH')
         self.assertNotIn('ORPHAN_CONSUMER_EFFECT', result['issue_counts'])
         self.assertEqual(result['metrics']['orphan_consumer_effects'], 0)
+        self.assertNotIn('PRODUCER_SEQUENCE_GAP', result['issue_counts'])  # cascade, not a real gap
         self.assertEqual(result['metrics']['unverifiable_lane_effects'], 12)
         self.assertIs(result['lanes']['BTC']['verifiable'], False)
 

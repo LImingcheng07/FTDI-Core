@@ -17,11 +17,13 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from ftdi_core import archive_e2e
 from ftdi_core.archive_e2e import ArchiveLimits, reconcile_archive_aware
 from ftdi_core.adapters.s070041 import multi_lane
 from ftdi_core.adapters.s070041.external_delivery import EffectStore
+from ftdi_core.preparation import prepare_archive
 
 from test_archive_e2e import Fixture, NOTICE_CODES, PROJECT_ROOT, sql
 
@@ -249,6 +251,27 @@ class ReviewRegressionTests(unittest.TestCase):
         (self.f.root / 'archives' / 'BTC' / 'notes.txt').write_text('x', encoding='utf-8')
         result = self.audit(limits=ArchiveLimits(max_archive_dir_entries=2))
         self.assert_inconsistent(result, 'ARCHIVE_PATH_CONFLICT')
+
+    # Found on the full-day real-data run: cascade findings must not misdirect diagnosis ----
+    def test_hidden_middle_event_reports_gap_but_not_cascading_manifest_mismatch(self):
+        archive = self.f.sources / 'BTCUSDT-aggTrades-2024-06-01.zip'
+        rows = ''.join(f'{i},69000.12,0.001,100,101,1717200000000000,false,True\n' for i in range(1, 9))
+        with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zipped:
+            zipped.writestr(zipfile.ZipInfo('BTCUSDT-aggTrades-2024-06-01.csv', date_time=(2024, 6, 1, 0, 0, 0)), rows)
+        self.f.source = Path(prepare_archive(archive, self.f.sources / 'prepared', limit=0)['output'])
+        self.f.replay()
+        self.f.deliver()
+        self.f.prune(6)
+
+        def hide(items):
+            items[2]['outcome'] = 'DUPLICATE_IDENTICAL'
+            del items[2]['outbox']
+        self.f.rewrite_segment(hide)
+        sql(self.f.db(), 'UPDATE archive_segments SET outbox_count = outbox_count - 1')
+        sql(self.f.consumer, 'DELETE FROM effects WHERE seq = 3')
+        result = self.assert_inconsistent(self.audit(), 'DISPOSITION_CLAIM_UNVERIFIED', 'PRODUCER_SEQUENCE_GAP')
+        self.assertNotIn('SOURCE_MANIFEST_MISMATCH', result['issue_counts'])
+        self.assertIsNone(result['lanes']['BTC']['first_seq'])
 
 
 if __name__ == '__main__':

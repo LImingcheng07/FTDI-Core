@@ -1,0 +1,328 @@
+{
+  "schema": "FTDI-Core-Real-Archive-Audit-Evidence-v1",
+  "task": "Task 001 gate A11",
+  "environment": "native Windows 11 Pro 10.0.26300, Python 3.11.9, SQLite 3.45.1",
+  "started": "2026-11-07 13:19:32",
+  "finished": "2026-11-07 13:38:08",
+  "input": {
+    "archive_name": "BTCUSDT-aggTrades-2024-06-01.zip",
+    "read_only": true,
+    "zip_sha256_before": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+    "zip_sha256_after": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+    "zip_unchanged": true,
+    "owner_source_dir_unchanged": true,
+    "companion_checksum_matches": true
+  },
+  "prepared": {
+    "records": 554441,
+    "source_seq_first": 3023902824,
+    "source_seq_last": 3024457264,
+    "source_seq_gaps": 0,
+    "archive_sha256": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
+    "jsonl_sha256": "1f157174bc3555276e596074c13e34b6fb11b8fa8f557654a3c88ec2c56fdb0a",
+    "canonical_events_sha256": "c47af609dca14787ee9212f29eba978382aa41b0c00a8ff6f1a922fe44aea538",
+    "normalization_version": "FTDI-CSV-AGGTRADES-v1",
+    "independent_checksum_provided": true
+  },
+  "sizes_mib": {
+    "producer_db": 818.2,
+    "archives": 62.1,
+    "consumer_db": 403.6,
+    "source_jsonl": 190.6
+  },
+  "pipeline_first_run": [
+    {
+      "step": "prepare full day",
+      "cmd": "python -m ftdi_core prepare --archive <path> --checksum <path> --outdir <path> --limit 0",
+      "rc": 0,
+      "wall_s": 7.28,
+      "status": null
+    },
+    {
+      "step": "replay",
+      "cmd": "python -m ftdi_core replay --lane <path> --outdir <path> --batch 1024 --max-pending 4096 --max-backlog 8192",
+      "rc": 0,
+      "wall_s": 49.0,
+      "status": true
+    },
+    {
+      "step": "lab-e2e (separate consumer process, localhost HTTP)",
+      "cmd": "python -m ftdi_core lab-e2e --outdir <path> --consumer-db <path> --batch 512",
+      "rc": 0,
+      "wall_s": 406.96,
+      "status": true
+    },
+    {
+      "step": "audit-e2e before prune",
+      "cmd": "python -m ftdi_core audit-e2e --outdir <path> --consumer-db <path>",
+      "rc": 0,
+      "wall_s": 57.77,
+      "status": "COMPLETE",
+      "metrics": {
+        "producer_outbox": 554441,
+        "producer_acked": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "archived_records_unsupported": 0
+      }
+    },
+    {
+      "step": "audit-e2e-archive before prune (parity, nothing archived)",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path> --report <path>",
+      "rc": 0,
+      "wall_s": 74.84,
+      "peak_working_set_mib": "not measured (probe bug in the first run; see final_code_rerun)",
+      "status": "COMPLETE",
+      "issue_counts": {},
+      "metrics": {
+        "producer_outbox": 554441,
+        "producer_acked": 554441,
+        "archived_records": 0,
+        "archived_segments": 0,
+        "archived_segments_parsed": 0,
+        "archived_events": 0,
+        "archived_events_matched": 0,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 554441
+      },
+      "snapshot_verified": true
+    },
+    {
+      "step": "S07 retention prune (20000 per call)",
+      "calls": 25,
+      "archived_total": 500000,
+      "wall_s": 69.25
+    },
+    {
+      "step": "audit-e2e after prune (v0.2 refusal expected)",
+      "cmd": "python -m ftdi_core audit-e2e --outdir <path> --consumer-db <path>",
+      "rc": 2,
+      "wall_s": 20.04,
+      "status": "INCONSISTENT",
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "consumer_effects": 554441,
+        "matched_effects": 54441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 500000,
+        "content_conflicts": 0,
+        "archived_records_unsupported": 500000
+      }
+    },
+    {
+      "step": "audit-e2e-archive after prune",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path> --report <path>",
+      "rc": 0,
+      "wall_s": 86.15,
+      "peak_working_set_mib": "not measured (probe bug in the first run; see final_code_rerun)",
+      "status": "COMPLETE",
+      "issue_counts": {},
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "archived_records": 500000,
+        "archived_segments": 25,
+        "archived_segments_parsed": 25,
+        "archived_events": 500000,
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 554441
+      },
+      "snapshot_verified": true
+    },
+    {
+      "step": "relocated copy without flag",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path>",
+      "rc": 2,
+      "wall_s": 88.3,
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED": 25
+      },
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "archived_records": 500000,
+        "archived_segments": 25,
+        "archived_segments_parsed": 25,
+        "archived_events": 500000,
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 554441
+      },
+      "snapshot_verified": true
+    },
+    {
+      "step": "relocated copy with --allow-relocated-archives",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path> --allow-relocated-archives",
+      "rc": 0,
+      "wall_s": 87.46,
+      "status": "COMPLETE",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED_ALLOWED": 25
+      },
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "archived_records": 500000,
+        "archived_segments": 25,
+        "archived_segments_parsed": 25,
+        "archived_events": 500000,
+        "archived_events_matched": 500000,
+        "expected_events_total": 554441,
+        "consumer_effects": 554441,
+        "matched_effects": 554441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 554441
+      },
+      "snapshot_verified": true
+    },
+    {
+      "step": "corruption A: one flipped bit",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path> --allow-relocated-archives",
+      "rc": 2,
+      "wall_s": 79.11,
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED_ALLOWED": 25,
+        "ARCHIVE_SHA256_MISMATCH": 1,
+        "PRODUCER_SEQUENCE_GAP": 1,
+        "SOURCE_MANIFEST_MISMATCH": 1
+      },
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "archived_records": 500000,
+        "archived_segments": 25,
+        "archived_segments_parsed": 24,
+        "archived_events": 480000,
+        "archived_events_matched": 480000,
+        "expected_events_total": 534441,
+        "consumer_effects": 554441,
+        "matched_effects": 534441,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 534441
+      },
+      "snapshot_verified": true
+    },
+    {
+      "step": "corruption B: delivered event relabelled DUPLICATE_IDENTICAL, manifest fixed, consumer row deleted",
+      "cmd": "python -m ftdi_core audit-e2e-archive --outdir <path> --consumer-db <path> --allow-relocated-archives",
+      "rc": 2,
+      "wall_s": 86.21,
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED_ALLOWED": 25,
+        "DISPOSITION_CLAIM_UNVERIFIED": 1,
+        "PRODUCER_SEQUENCE_GAP": 1,
+        "SOURCE_MANIFEST_MISMATCH": 1
+      },
+      "metrics": {
+        "producer_outbox": 54441,
+        "producer_acked": 54441,
+        "archived_records": 500000,
+        "archived_segments": 25,
+        "archived_segments_parsed": 25,
+        "archived_events": 499999,
+        "archived_events_matched": 499999,
+        "expected_events_total": 554440,
+        "consumer_effects": 554440,
+        "matched_effects": 554440,
+        "remote_missing": 0,
+        "orphan_consumer_effects": 0,
+        "content_conflicts": 0,
+        "source_lines_anchored": 554441
+      },
+      "snapshot_verified": true
+    }
+  ],
+  "corruptions": {
+    "A": {
+      "segment": "raw_000000240000_000000260000.jsonl.gz",
+      "change": "one bit flipped"
+    },
+    "B": {
+      "segment": "raw_000000060000_000000080000.jsonl.gz",
+      "file_index": 60100,
+      "seq": 3023962924,
+      "consumer_rows_deleted": 1
+    }
+  },
+  "final_code_rerun": [
+    {
+      "step": "final code: healthy full day (500000 archived + 54441 resident)",
+      "status": "COMPLETE",
+      "issue_counts": {},
+      "matched_effects": 554441,
+      "archived_events_matched": 500000,
+      "source_lines_anchored": 554441,
+      "snapshot_verified": true,
+      "rc": 0,
+      "wall_s": 81.08,
+      "api_ok": true,
+      "peak_working_set_mib": 37.0
+    },
+    {
+      "step": "final code: corruption B present (relabelled + consumer row deleted)",
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED_ALLOWED": 25,
+        "DISPOSITION_CLAIM_UNVERIFIED": 1,
+        "PRODUCER_SEQUENCE_GAP": 1
+      },
+      "matched_effects": 554440,
+      "archived_events_matched": 499999,
+      "source_lines_anchored": 554441,
+      "snapshot_verified": true,
+      "rc": 2,
+      "wall_s": 88.45,
+      "api_ok": true,
+      "peak_working_set_mib": 36.9
+    },
+    {
+      "step": "final code: corruption B + one flipped bit in raw_000000240000_000000260000.jsonl.gz",
+      "status": "INCONSISTENT",
+      "issue_counts": {
+        "ARCHIVE_PATH_RELOCATED_ALLOWED": 25,
+        "ARCHIVE_SHA256_MISMATCH": 1,
+        "DISPOSITION_CLAIM_UNVERIFIED": 1
+      },
+      "matched_effects": 534440,
+      "archived_events_matched": 479999,
+      "source_lines_anchored": 534441,
+      "snapshot_verified": true,
+      "rc": 2,
+      "wall_s": 81.18,
+      "api_ok": true,
+      "peak_working_set_mib": 36.7
+    }
+  ],
+  "limits": [
+    "local evidence consistency for the supplied interval only",
+    "not venue completeness before aggregate ID 3023902824",
+    "not a latency/throughput certification; not production certified"
+  ]
+}

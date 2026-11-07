@@ -132,6 +132,10 @@ Key definitions:
   (source line position, contiguous), and market `seq`/`source_seq` (may interleave between
   archive and resident, e.g. archived `[1,2,3,5]` + resident `[4,6,7,8]` is valid; the union
   must be unique and contiguous, ending at `lanes.next_seq - 1`).
+- **No cascading findings**: `PRODUCER_SEQUENCE_GAP` is reported only when every archived record was
+  read, and the source manifest's sequence span is compared only for a verifiable, contiguous lane; holes
+  caused by an unreadable segment are explained by that segment's own fatal finding (the lane is then
+  `verifiable: false`, its consumer effects count as `unverifiable_lane_effects`, `first_seq` is null).
 
 ## 6. Read-only boundary
 

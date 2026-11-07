@@ -19,7 +19,7 @@ def main():
         paths.append(p)
     manifest={'release':'FTDI-Core-v0.2','source_data_included':False,
               'source_zip_sha256_expected_when_user_supplies_archival_fixture':
-              '78085fc50146fcd2a228bb95495246c539bacc5cd635268bc8a641ce90e3c9',
+              '78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9',
               'files':{str(p.relative_to(ROOT)).replace('\\','/'):{
                   'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in paths}}
     manifest_path=ROOT/'PACKAGE_MANIFEST.json'
