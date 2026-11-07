@@ -1,7 +1,9 @@
 * text=auto
 *.py text eol=lf
 *.md text eol=lf
-*.ps1 text eol=crlf
+# The shipped and baseline-manifest-pinned .ps1 bytes are LF, and the owner ran them with
+# Windows PowerShell successfully; eol=crlf made every checkout differ from the pinned bytes.
+*.ps1 text eol=lf
 # Hash-pinned evidence (manifests, evidence JSON) must keep identical bytes on every checkout,
 # regardless of core.autocrlf on Windows.
 *.json text eol=lf
