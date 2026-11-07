@@ -14,7 +14,7 @@ Immutable source ZIP + checksum
   -> consumer (separate process): commit effects BEFORE the HTTP answer   [consumer effects.sqlite3]
   -> producer: delivery ACK + outbox.delivered=1
 
-Producer retention (archive-producer, dry run by default; S07 adapter prune does the work)
+Producer retention (archive-producer: audit-e2e-archive first, dry run by default; S07 adapter prune does the work)
   resident outbox prefix -> verified gzip segments (<run>/archives/<lane>/, SHA-256, manifest tiling)
   receipt per event: consumer hot row with the same event_id, OR consumer digest row with the same payload SHA
 
@@ -46,6 +46,10 @@ Audit
    receipt (ADR-007 phase 2, partial), so producer archiving and consumer compaction are independent
    maintenance steps.
 6. **No latency without a clock model** (ADR-008).
+7. **Retention never hides an inconsistency.** `archive-producer` runs `audit-e2e-archive` before planning or
+   applying and refuses unless the run is `COMPLETE`, `PENDING_DELIVERY` or `RETRY_REQUIRED`; every record is
+   validated by the auditor's own parser before it is written; archived rows are exactly the rows of the
+   committed segment (delete and table counts checked in the transaction, no triggers).
 
 ## Module map (new in v0.3)
 

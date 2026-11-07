@@ -7,7 +7,7 @@ You are working on FTDI-Core v0.3.0 (Python 3.10+, stdlib-only research prototyp
 ## First actions in every session
 1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/ARCHITECTURE_V1_2.md, docs/DATA_CONTRACT_V1.md and docs/RELEASE_GATES_V03.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 277 at v0.3.0)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 294 at v0.3.0)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.
@@ -48,8 +48,8 @@ You are working on FTDI-Core v0.3.0 (Python 3.10+, stdlib-only research prototyp
 **v0.3.0 released 2026-11-07** (tag `v0.3.0`, local only; `RELEASE_NOTES_v0.3.0.md`, gates `docs/RELEASE_GATES_V03.md`,
 manifest `release/PACKAGE_MANIFEST.v0.3.0.json`, ZIP built by `scripts/build_release.py`). Contents: Task 001 archive-aware
 audit (`audit-e2e-archive`, ADR-006); Task 002 phase 1 consumer retention v2 (`consumer-retention`, `plan-consumer-retention`,
-ADR-007); Core `archive-producer` (dry run unless `--apply`) whose prune accepts identical v2 digests as receipts, so producer
-archive and consumer compaction run in either order; Task 003 timestamp provenance (`analyze-clock-evidence`, ADR-008; the
+ADR-007); Core `archive-producer` (mandatory pre-audit, dry run unless `--apply`) whose prune accepts identical v2 digests as
+receipts, so producer archive and consumer compaction run in either order; Task 003 timestamp provenance (`analyze-clock-evidence`, ADR-008; the
 live pilot yields no latency); consumer checkpoint tuning (ADR-009). Full-day acceptance: `scripts/acceptance_full_day.py`
 (evidence `examples/V030_ACCEPTANCE_EVIDENCE.json`). The owner's own data was never compacted; doing so still needs explicit
 consent. Keep run data on the NVMe SSD (C:), not the E: HDD.

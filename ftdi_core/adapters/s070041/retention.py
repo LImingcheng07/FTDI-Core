@@ -3,6 +3,10 @@
 
 NEVER prunes unprocessed, pending, or externally unacknowledged outbox records.
 Non-regulatory local experiment. Exclusive maintenance window is required.
+
+Low-level tool: direct use (``python -m ftdi_core.adapters.s070041.retention``) applies immediately and does
+NOT run the archive-aware audit first. Use ``python -m ftdi_core archive-producer`` (dry run by default,
+mandatory audit-e2e-archive gate, record validation, collision prediction).
 """
 from __future__ import annotations
 import argparse
@@ -76,6 +80,8 @@ def collect_archivable(db,start,limit):
             raise ValueError('Several outbox or delivery rows reference one raw record; refuse archival')
         outbox=outboxes[0] if outboxes else None
         delivery=deliveries[0] if deliveries else None
+        if outbox is not None and (type(outbox['delivered']) is not int or outbox['delivered'] not in (0,1)):
+            raise ValueError('Invalid outbox delivered flag; refuse archival')
         if outbox is not None and (not outbox['delivered'] or delivery is None):
             break
         if dispo['outcome']=='ORDERED_PUBLISHED' and outbox is None:
@@ -122,6 +128,20 @@ def export_gzip(path,items):
     if sha256_file(path)!=checksum:
         raise ValueError('Archive was not durable or changed prior to prune')
     return checksum
+
+
+EVIDENCE_TABLES=('raw_journal','outbox','delivery','disposition','pending')
+
+
+def require_no_triggers(db):
+    """Deletes must have no side effects: a trigger could remove rows that are not in the archive."""
+    names=[r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")]
+    if names:
+        raise ValueError(f'Producer DB contains triggers ({", ".join(names)}); refuse archival')
+
+
+def table_counts(db):
+    return tuple(db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0] for t in EVIDENCE_TABLES)
 
 
 def require_independent(root,consumer_db):
@@ -193,6 +213,8 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
         try:
             if int(get_meta(db,'archived_records') or 0)!=start:
                 raise ValueError('Concurrent pruning cursor change; rollback')
+            require_no_triggers(db)
+            before=table_counts(db)
             for x in items:
                 current=db.execute('SELECT file_index,processed,raw_sha256 FROM raw_journal WHERE id=?',(x['id'],)).fetchone()
                 if (current is None or current['file_index']!=x['file_index'] or
@@ -211,6 +233,9 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
                         db.execute('DELETE FROM raw_journal WHERE id=?',(raw_id,)).rowcount)
                 if counts!=((1,1,1,1) if 'outbox' in x else (0,0,1,1)):
                     raise ValueError('Rows deleted differ from the archived evidence; rollback')
+            removed=tuple(b-a for b,a in zip(before,table_counts(db)))
+            if removed!=(len(items),out_count,out_count,len(items),0):
+                raise ValueError('Rows deleted differ from the archived evidence; rollback')
             db.execute('''INSERT INTO archive_segments VALUES(?,?,?,?,?,?)''',
                        (start,end,len(items),out_count,str(archive.resolve()),checksum))
             set_meta(db,'archived_records',end)

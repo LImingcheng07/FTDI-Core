@@ -24,7 +24,7 @@
 
 **Consequence**: User can develop and audit without accidentally pruning source data or starting a trading service.
 
-**v0.3 (2026-11-07)**: the "later CLI" exists as `archive-producer`: explicit `--consumer-db`, a strict read-only dry run applying the adapter's own rules (default), `--apply` as the separate destructive opt-in, and `audit-e2e-archive` for the archived result. The adapter module entry point is unchanged.
+**v0.3 (2026-11-07)**: the "later CLI" exists as `archive-producer`: explicit independent `--consumer-db`, a mandatory `audit-e2e-archive` before planning or applying (refused unless COMPLETE, PENDING_DELIVERY or RETRY_REQUIRED), a read-only dry run applying the adapter's own rules (default), and `--apply` as the separate destructive opt-in. The adapter module entry point is unchanged but gained the review fixes (one outbox/delivery row per raw record, lane-checked ACK, exact delete counts, consumer independence).
 
 ## ADR-004 -- Live ingress is a gated boundary, not a shortcut (ACCEPTED)
 

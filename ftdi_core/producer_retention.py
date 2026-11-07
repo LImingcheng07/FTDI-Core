@@ -1,15 +1,20 @@
 """Core front-end for the receipt-gated producer archive (``archive-producer``). Dry run unless ``apply``.
 
 The destructive work is done by the maintained S07 adapter ``prune`` (verified gzip segment, SHA-256 checked,
-rows deleted in the same transaction that registers the segment, exact delete counts). This module adds what the
-Core CLI requires (ADR-003):
+rows deleted in the same transaction that registers the segment, exact delete and table counts, no triggers).
+This module adds what the Core CLI requires (ADR-003):
 
-* a mandatory read-only ``audit-e2e-archive`` before planning or applying: any fatal finding anywhere in the run
-  (status ``INCONSISTENT``) refuses, so archiving can never erase evidence of an inconsistency;
-* a dry run on read-only snapshots that applies the adapter's own ``collect_archivable`` and receipt rules
-  unchanged, predicts segment-file collisions, and refuses if a database changed while it ran;
-* chunked application up to an explicit limit, the reason why archiving stopped, and on any error the progress
-  actually committed (read back from the producer's cursor). Archive files are never deleted.
+* a mandatory read-only ``audit-e2e-archive`` before planning or applying: unless it is COMPLETE,
+  PENDING_DELIVERY or RETRY_REQUIRED the archive is refused, so archiving never erases evidence of an
+  inconsistency; on apply, the evidence files must be byte-identical before and after that audit;
+* one chunk planner shared by the dry run and every applied chunk: it runs the adapter's own
+  ``collect_archivable`` and receipt rules unchanged on a read-only snapshot, validates every record with the
+  auditor's own archived-record parser (never write an archive the audit cannot read back), computes the exact
+  segment bytes, and predicts collisions, overlapping unreferenced segment files and blocked temp paths;
+* on apply, the committed segment must have exactly the planned SHA-256; on any error the progress actually
+  committed is read back from the producer cursor. Archive files are never deleted.
+
+Precondition (as for every retention command): an exclusive maintenance window, no other writer.
 """
 from __future__ import annotations
 
@@ -19,16 +24,19 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import sqlite3
 
 from .adapters.s070041.durable_stream import canonical, sha256_file
 from .adapters.s070041.retention import (collect_archivable, count_receipts, get_meta, prune,
-                                         require_independent)
-from .archive_e2e import NOTICE_CODES, _fingerprint, _Snapshot, _Unopenable, reconcile_archive_aware
+                                         require_independent, require_no_triggers)
+from .archive_e2e import (NOTICE_CODES, _binding_ok, _fingerprint, _parse_item, _published_event, _Reject,
+                          _Snapshot, _Unopenable, reconcile_archive_aware)
 
 CHUNK_MAX = 20000
 AUDIT_ACCEPTED = ('COMPLETE', 'PENDING_DELIVERY', 'RETRY_REQUIRED')
 MIRRORED = ('raw_journal', 'pending', 'disposition', 'outbox', 'delivery')
+SEGMENT_NAME = re.compile(r'raw_(\d{12})_(\d{12})\.jsonl\.gz')
 
 
 def _registered(root, lane):
@@ -57,13 +65,13 @@ class _ReadOnly:
     def __exit__(self, kind, value, traceback):
         self.snap.close()
         if kind is None and not self.snap.stable:
-            raise ValueError(f'{self.label} changed during the dry run; stop writers and retry')
+            raise ValueError(f'{self.label} changed while it was read; stop writers and retry')
         return False
 
 
 def _files(*db_paths):
-    """Fingerprints of the evidence files (database and WAL; ``-shm`` is SQLite coordination state)."""
-    return {f'{p}{suffix}': _fingerprint(Path(f'{p}{suffix}'), False) for p in db_paths for suffix in ('', '-wal')}
+    """Content fingerprints of the evidence files (database and WAL; ``-shm`` is coordination state)."""
+    return {f'{p}{suffix}': _fingerprint(Path(f'{p}{suffix}'), True) for p in db_paths for suffix in ('', '-wal')}
 
 
 def _pre_audit(root, consumer_db):
@@ -105,19 +113,65 @@ def _mirror(db, pos, want):
         raise
 
 
-def _segment_collision(root, lane, start, items):
-    """Predict the adapter's ``export_gzip``: an existing segment file must hold exactly the same bytes."""
-    path = root / 'archives' / lane / f'raw_{start:012d}_{start + len(items):012d}.jsonl.gz'
-    if not path.exists() and not path.is_symlink():
-        return
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f'Archive segment path exists and is not a regular file: {path.name}')
+def _segment_bytes(items):
+    """Exactly what the adapter's ``export_gzip`` writes; every record must be readable by the auditor."""
     buffer = io.BytesIO()
     with gzip.GzipFile(filename='', mode='wb', fileobj=buffer, mtime=0, compresslevel=6) as stream:
         for item in items:
-            stream.write((canonical(item) + '\n').encode('utf-8'))
-    if hashlib.sha256(buffer.getvalue()).hexdigest() != sha256_file(path):
-        raise ValueError(f'Archive segment file collision with different content: {path.name}')
+            try:
+                line = canonical(item)
+                _parse_item(line.encode('utf-8'), item['file_index'])
+                if 'outbox' in item:
+                    o = item['outbox']
+                    _published_event(o['lane'], o['seq'], o['raw_sha256'], o['payload'])
+                    if not _binding_ok(item['payload'], o['payload']):
+                        raise ValueError('published event is not the canonical form of its raw record')
+            except _Reject as exc:
+                raise ValueError(f"record file_index={item.get('file_index')} would not be readable by "
+                                 f"audit-e2e-archive ({exc.code} {exc.detail}); refuse archival") from None
+            except (TypeError, ValueError, KeyError, RecursionError) as exc:
+                raise ValueError(f"record file_index={item.get('file_index')} cannot be archived "
+                                 f"({type(exc).__name__}: {exc}); refuse archival") from None
+            stream.write((line + '\n').encode('utf-8'))
+    return buffer.getvalue()
+
+
+def _check_destination(root, lane, start, end, data, registered):
+    """Predict ``export_gzip`` and the audit after the commit (registered = paths of committed segments)."""
+    directory = root / 'archives' / lane
+    name = f'raw_{start:012d}_{end:012d}.jsonl.gz'
+    path, temp = directory / name, directory / f'{name}.tmp'
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise ValueError(f'Archive temp path is blocked by a non-file: {temp.name}')
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f'Archive segment path exists and is not a regular file: {name}')
+    if path.is_file() and sha256_file(path) != hashlib.sha256(data).hexdigest():
+        raise ValueError(f'Archive segment file collision with different content: {name}')
+    if directory.is_dir():
+        for entry in directory.iterdir():
+            match = SEGMENT_NAME.fullmatch(entry.name)
+            if (match and entry.name != name and entry.name not in registered
+                    and int(match.group(1)) < end and start < int(match.group(2))):
+                raise ValueError(f'Unreferenced archive file {entry.name} overlaps the range [{start}, {end}); '
+                                 'an interrupted run with another --chunk may have left it: retry with that '
+                                 'chunk size, or move the file out of archives/ after checking it')
+
+
+def _plan_chunk(root, lane, db_path, consumer_db, pos, want):
+    """Read-only plan of the next chunk: (items, receipts (hot, digest), segment bytes or None, stop reason)."""
+    with _ReadOnly(db_path, 'producer') as db, _ReadOnly(consumer_db, 'consumer') as receipts:
+        require_no_triggers(db)
+        with closing(_mirror(db, pos, want)) as chunk_db:
+            items = collect_archivable(chunk_db, pos, want)
+        stop = None if len(items) == want else _blocker(db, pos + len(items))
+        if not items:
+            return items, (0, 0), None, stop
+        hot_digest = count_receipts(receipts, items)
+        table = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archive_segments'").fetchone()
+        registered = {Path(r[0]).name for r in db.execute('SELECT archive_path FROM archive_segments')} if table else set()
+    data = _segment_bytes(items)
+    _check_destination(root, lane, pos, pos + len(items), data, registered)
+    return items, hot_digest, data, stop
 
 
 def _blocker(db, pos):
@@ -148,37 +202,71 @@ def _cursor(db_path):
     return total, segments
 
 
-def _stopped(db_path, pos):
-    with _ReadOnly(db_path, 'producer') as db:
-        return _blocker(db, pos)
+def _source_ok(entry):
+    if not Path(entry['source']).is_file() or sha256_file(entry['source']) != entry['sha256']:
+        raise ValueError('Source immutable fingerprint not satisfied; refuse archival')
 
 
 def _dry_run(root, lane, entry, db_path, consumer_db, limit, chunk):
     before = _files(db_path, Path(consumer_db).resolve())
     pre_audit = _pre_audit(root, consumer_db)
-    if not Path(entry['source']).is_file() or sha256_file(entry['source']) != entry['sha256']:
-        raise ValueError('Source immutable fingerprint not satisfied; refuse archival')
+    _source_ok(entry)
+    start = pos = _cursor(db_path)[0]
     hot = digest = 0
-    with _ReadOnly(db_path, 'producer') as db, _ReadOnly(consumer_db, 'consumer') as receipts:
-        start = pos = int(get_meta(db, 'archived_records') or 0)
-        while pos - start < limit:
-            want = min(chunk, limit - (pos - start))
-            with closing(_mirror(db, pos, want)) as chunk_db:
-                items = collect_archivable(chunk_db, pos, want)
-            if items:
-                h, d = count_receipts(receipts, items)
-                hot, digest = hot + h, digest + d
-                _segment_collision(root, lane, pos, items)
-            pos += len(items)
-            if len(items) < want:
-                break
-        stopped = 'LIMIT_REACHED' if pos - start >= limit else _blocker(db, pos)
+    stopped = 'LIMIT_REACHED'
+    while pos - start < limit:
+        items, (h, d), _, stop = _plan_chunk(root, lane, db_path, consumer_db, pos, min(chunk, limit - (pos - start)))
+        hot, digest, pos = hot + h, digest + d, pos + len(items)
+        if stop is not None:
+            stopped = stop
+            break
     if _files(db_path, Path(consumer_db).resolve()) != before:
         raise ValueError('a producer or consumer database changed during the dry run; stop writers and retry')
     return {'status': 'DRY_RUN', 'lane': lane, 'pre_audit': pre_audit, 'archived_total': start,
             'would_archive': pos - start, 'would_archive_total': pos,
             'receipts': {'consumer_hot_rows': hot, 'consumer_digests': digest}, 'stopped': stopped,
             'changed': False, 'apply_required': True}
+
+
+def _apply(root, lane, entry, db_path, consumer_db, limit, chunk):
+    before = _files(db_path, Path(consumer_db).resolve())
+    pre_audit = _pre_audit(root, consumer_db)
+    if _files(db_path, Path(consumer_db).resolve()) != before:
+        raise ValueError('a producer or consumer database changed during the pre-audit; stop writers and retry')
+    _source_ok(entry)
+    start_total, start_segments = _cursor(db_path)
+    archived, segments, stopped = 0, [], 'LIMIT_REACHED'
+    try:
+        while archived < limit:
+            pos = start_total + archived
+            items, _, data, stop = _plan_chunk(root, lane, db_path, consumer_db, pos, min(chunk, limit - archived))
+            if items:
+                result = prune(root, lane, len(items), False, consumer_db)
+                if result['archived_new'] != len(items) or result['archive_sha256'] != hashlib.sha256(data).hexdigest():
+                    raise ValueError('the committed segment differs from the planned one (another writer?); '
+                                     'audit the run')
+                archived += len(items)
+                segments.append({'archive_file': Path(result['archive_file']).relative_to(root).as_posix(),
+                                 'records': len(items), 'sha256': result['archive_sha256'],
+                                 'bytes': result['archive_bytes']})
+            if stop is not None:
+                stopped = stop
+                break
+        total, _ = _cursor(db_path)
+        if total - start_total != archived:
+            raise ValueError(f'producer cursor moved by {total - start_total}, expected {archived}; audit the run')
+    except Exception as exc:
+        try:
+            now, count = _cursor(db_path)
+            progress = (f'committed by this run: {now - start_total} events in {count - start_segments} '
+                        f'segments; archived_total is now {now}')
+        except Exception as again:  # report what is known, never a guess
+            progress = f'committed progress could not be read back ({again})'
+        raise ValueError(f'{exc} ({progress}; every committed segment is complete and auditable)') from exc
+    return {'status': 'ARCHIVED' if archived else 'NOTHING_ARCHIVABLE', 'lane': lane, 'pre_audit': pre_audit,
+            'archived_new': archived, 'archived_total': total, 'segments': segments, 'stopped': stopped,
+            'changed': bool(archived), 'archive_files_kept': True,
+            'note': 'database pages are reused; the file shrinks only after a VACUUM (not performed)'}
 
 
 def archive_producer(root, lane, *, consumer_db, limit=CHUNK_MAX, apply=False, chunk=CHUNK_MAX):
@@ -192,33 +280,5 @@ def archive_producer(root, lane, *, consumer_db, limit=CHUNK_MAX, apply=False, c
         raise ValueError('an existing independent --consumer-db is required (receipts)')
     entry, db_path = _registered(root, lane)
     require_independent(root, consumer_db)
-    if not apply:
-        return _dry_run(root, lane, entry, db_path, consumer_db, limit, chunk)
-    pre_audit = _pre_audit(root, consumer_db)
-    start_total, start_segments = _cursor(db_path)
-    archived, segments = 0, []
-    try:
-        while archived < limit:
-            result = prune(root, lane, min(chunk, limit - archived), False, consumer_db)
-            if not result['archived_new']:
-                break
-            archived += result['archived_new']
-            segments.append({'archive_file': Path(result['archive_file']).relative_to(root).as_posix(),
-                             'records': result['archived_new'], 'sha256': result['archive_sha256'],
-                             'bytes': result['archive_bytes']})
-    except Exception as exc:
-        try:
-            total, count = _cursor(db_path)
-            progress = (f'committed by this run: {total - start_total} events in {count - start_segments} '
-                        f'segments; archived_total is now {total}')
-        except Exception as again:  # report what is known, never a guess
-            progress = f'committed progress could not be read back ({again})'
-        raise ValueError(f'{exc} ({progress}; every committed segment is complete and auditable)') from exc
-    total, _ = _cursor(db_path)
-    if total - start_total != archived:
-        raise ValueError(f'producer cursor moved by {total - start_total}, expected {archived}; audit the run')
-    return {'status': 'ARCHIVED' if archived else 'NOTHING_ARCHIVABLE', 'lane': lane, 'pre_audit': pre_audit,
-            'archived_new': archived, 'archived_total': total, 'segments': segments,
-            'stopped': 'LIMIT_REACHED' if archived >= limit else _stopped(db_path, total),
-            'changed': bool(archived), 'archive_files_kept': True,
-            'note': 'database pages are reused; the file shrinks only after a VACUUM (not performed)'}
+    run = _apply if apply else _dry_run
+    return run(root, lane, entry, db_path, consumer_db, limit, chunk)

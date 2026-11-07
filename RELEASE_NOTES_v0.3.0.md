@@ -37,12 +37,21 @@ The consumer `effects` table no longer has to grow forever, and it never forgets
 ### 3. Producer archive in the Core CLI — `archive-producer`; tier-aware receipts (ADR-003, ADR-007 phase 2 partial)
 * New Core subcommand `archive-producer --outdir RUN --lane ALIAS --consumer-db DB [--limit N] [--apply]`.
   Previously the producer archive was reachable only through the S07 adapter module, which applies
-  immediately. The Core command is a **dry run unless `--apply`**: it opens both databases as strict
-  read-only snapshots (no file touched), applies the adapter's own archivability rules unchanged, and reports
-  `would_archive`, the receipt sources and why it stops (`LIMIT_REACHED`, `NOT_ACKNOWLEDGED`,
-  `PENDING_SEQUENCE_GAP`, `END_OF_JOURNAL`, ...). `--apply` archives in verified segments of at most 20,000
-  events; a refusal between segments reports how many segments this run committed (each one auditable).
-  Full-day dry run: 554,441 events in 47 s.
+  immediately. The Core command is a **dry run unless `--apply`**, and both first run `audit-e2e-archive`:
+  unless it is `COMPLETE`, `PENDING_DELIVERY` or `RETRY_REQUIRED` the archive is refused, so archiving can never
+  erase the evidence of an inconsistency. The dry run reads read-only snapshots (no data or evidence file
+  changes; only SQLite's `-shm` coordination file may be touched), applies the adapter's own archivability and
+  receipt rules unchanged, validates every record with the auditor's own archived-record parser (an archive the
+  audit could not read back is never written), predicts segment-file collisions, overlapping leftover segment
+  files and blocked temp paths, refuses if a database changed meanwhile (content fingerprints), and
+  reports `would_archive`, the receipt sources and why it stops (`LIMIT_REACHED`, `NOT_ACKNOWLEDGED`,
+  `END_OF_JOURNAL`, ...). `--apply` plans every chunk the same way and requires the committed segment to have
+  exactly the planned SHA-256; after any failure it reports the progress actually committed (read back from the
+  producer cursor).
+* The adapter prune now also refuses several outbox/delivery rows on one raw record, an ACK for another lane,
+  an invalid delivered flag, triggers in the producer DB, and a consumer DB that is a producer lane DB; it checks
+  exact delete counts and table counts inside its transaction and releases its connection when initialisation
+  fails. Direct use of the adapter module stays a low-level tool without the Core audit gate (documented).
 * The producer prune accepts a consumer **digest row with the identical payload SHA** as an independent
   receipt, so producer archiving and consumer compaction can run in either order. A missing or altered
   receipt refuses the chunk before any change.
@@ -80,10 +89,10 @@ Guidance: keep run data on an SSD, use `--batch 1024` (`docs/PERF_WINDOWS_DELIVE
 
 | Suite | Result |
 |---|---|
-| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **277 / 277 OK** (65 v0.2 baseline + 212 new) |
+| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **294 / 294 OK** (65 v0.2 baseline + 229 new) |
 | Frozen S07 compatibility (`reference_s07_0041/`) | **45 / 45 OK** |
 | Independent black-box contract tests (Codex, written from the contracts only) | 48 audit + 75 retention, included above |
-| Independent adversarial reviews | audit: C1–C8; retention: R1–R6 — all fixed with mutation-checked regressions |
+| Independent adversarial reviews | audit: C1–C8; retention: R1–R6; producer archive: P1–P8 and follow-up Q1–Q7 — fixed with mutation-checked regressions (P7, slow tiny chunks, documented) |
 | Full-day real data (554,441 events, owner's ZIP read-only) | `scripts/acceptance_full_day.py`: **ACCEPTANCE PASS** — `examples/V030_ACCEPTANCE_EVIDENCE.json` |
 
 Release gates and evidence: `docs/RELEASE_GATES_V03.md`.

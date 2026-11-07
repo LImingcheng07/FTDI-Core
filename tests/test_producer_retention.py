@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -272,6 +273,112 @@ class ArchiveProducerTests(unittest.TestCase):
             self.fail('incomplete schema accepted')
         self.f.db().unlink()   # Windows: fails with WinError 32 if the connection leaked
         del frames
+
+    # Regressions for the follow-up review (Q1-Q7).
+
+    def test_q1_trigger_in_producer_db_refuses(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        sql(self.f.db(), 'CREATE TRIGGER extra AFTER DELETE ON raw_journal WHEN OLD.id = 1 BEGIN '
+                         'DELETE FROM raw_journal WHERE id = 4; END')
+        before = self.counts()
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, 'triggers'):
+                self.run_archive(apply=apply)
+        with self.assertRaisesRegex(ValueError, 'triggers'):
+            retention.prune(self.f.root, 'BTC', 4, consumer_db=self.f.consumer)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(self.archived(), 0)
+
+    def test_q1_table_count_invariant_rolls_back(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        real = retention.table_counts
+        calls = []
+
+        def drift(db):   # the second count (after the deletes) reports one raw row too many removed
+            counts = real(db)
+            calls.append(counts)
+            return counts if len(calls) == 1 else (counts[0] - 1,) + counts[1:]
+        before = self.counts()
+        with mock.patch.object(retention, 'table_counts', drift):
+            with self.assertRaisesRegex(ValueError, 'Rows deleted differ'):
+                retention.prune(self.f.root, 'BTC', 4, consumer_db=self.f.consumer)
+        self.assertEqual(self.counts(), before)
+
+    def test_q2_invalid_delivered_flag_is_not_archived(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        sql(self.f.db(), 'UPDATE outbox SET delivered = 2 WHERE seq = 1')
+        with self.assertRaisesRegex(ValueError, 'delivered flag'):
+            retention.prune(self.f.root, 'BTC', 4, consumer_db=self.f.consumer)
+        with self.assertRaises(ValueError):
+            self.run_archive(apply=True)
+        self.assertEqual(self.archived(), 0)
+
+    def test_q3_records_the_audit_could_not_read_are_refused_before_any_change(self):
+        for field, value in (('received_ns', -1), ('received_ns', b'not-json')):
+            with self.subTest(field=field, value=value):
+                f = Fixture(tempfile.mkdtemp(prefix='q3_', dir=self.f.base))
+                f.ingest(4)
+                f.deliver()
+                sql(f.db(), f'UPDATE raw_journal SET {field} = ? WHERE file_index = 2', (value,))
+                for apply in (False, True):
+                    with self.assertRaisesRegex(ValueError, r'record file_index=2 (would not be readable|cannot be)'):
+                        archive_producer(f.root, 'BTC', consumer_db=f.consumer, limit=4, apply=apply)
+                self.assertEqual(sql(f.db(), "SELECT v FROM meta WHERE k = 'archived_records'"), [])
+                self.assertFalse((f.root / 'archives').exists())
+
+    def test_q4_overlapping_unreferenced_segment_file_is_refused(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        stray = self.f.root / 'archives' / 'BTC' / 'raw_000000000000_000000000002.jsonl.gz'
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b'garbage')
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, 'overlaps the range'):
+                self.run_archive(apply=apply)
+        self.assertEqual(self.archived(), 0)
+        self.assertEqual(reconcile_archive_aware(self.f.root, self.f.consumer)['status'], 'COMPLETE')
+
+    def test_q5_blocked_temp_path_is_predicted(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        (self.f.root / 'archives' / 'BTC' / 'raw_000000000000_000000000004.jsonl.gz.tmp').mkdir(parents=True)
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, 'temp path is blocked'):
+                self.run_archive(apply=apply)
+        self.assertEqual(self.archived(), 0)
+
+    def test_q6_content_change_with_same_size_and_mtime_during_dry_run(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        real, db_file = retention.collect_archivable, self.f.db()
+
+        def silent_rewrite(db, start, limit):
+            info = os.stat(db_file)
+            with open(db_file, 'r+b') as handle:   # header bytes 72..91 are reserved (zero)
+                handle.seek(80)
+                handle.write(b'')
+            os.utime(db_file, ns=(info.st_atime_ns, info.st_mtime_ns))
+            return real(db, start, limit)
+        with mock.patch.object(pr, 'collect_archivable', silent_rewrite):
+            with self.assertRaisesRegex(ValueError, 'changed during the dry run'):
+                self.run_archive()
+
+    def test_q7_change_between_pre_audit_and_apply_refuses(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        real = pr.reconcile_archive_aware
+
+        def audit_then_tamper(*args, **kwargs):
+            report = real(*args, **kwargs)
+            sql(self.f.db(), "INSERT INTO meta(k, v) VALUES ('tampered', '1')")
+            return report
+        with mock.patch.object(pr, 'reconcile_archive_aware', audit_then_tamper):
+            with self.assertRaisesRegex(ValueError, 'changed during the pre-audit'):
+                self.run_archive(apply=True)
+        self.assertEqual(self.archived(), 0)
 
     def test_argument_validation(self):
         self.f.ingest(4)

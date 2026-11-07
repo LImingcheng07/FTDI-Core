@@ -78,13 +78,24 @@ python -m ftdi_core archive-producer --outdir C:\ftdi\run --lane BTC --consumer-
 python -m ftdi_core archive-producer --outdir C:\ftdi\run --lane BTC --consumer-db C:\ftdi\consumer\effects.sqlite3 --limit 500000 --apply   # 执行
 ```
 
-- 只归档**连续的、已确认的、并且消费端有独立回执**的前缀（回执可以是消费端的驻留行，也可以是压缩后的指纹）。
-  每段最多 20,000 条，写成带 SHA-256 的 gzip 段并校验后，才在同一个事务里删除库内行。
-- 演练是严格只读的，结果里的 `would_archive` 就是执行时会归档的条数；`receipts` 显示回执来源。
+- **每次演练和执行前都会先自动跑一次完整审计**（`audit-e2e-archive`）。只要整个运行目录里任何一个通道有致命问题
+  （状态为 `INCONSISTENT`，例如篡改、ACK 账不一致、未解决的序列缺口、源文件被改），就**拒绝归档**并列出问题代码，
+  因为归档会删除这些问题的证据。审计结果为 `COMPLETE`、`PENDING_DELIVERY` 或 `RETRY_REQUIRED` 时才继续。
+  全天数据的这一步约 1.5 分钟。
+- 只归档**连续的、已确认的、并且消费端有独立回执**的前缀。回执可以是消费端的驻留行，也可以是压缩后的指纹；
+  按设计被判为重复或隔离、从未投递的原始记录不需要回执。消费端库必须是独立的数据库，不能是生产端的库。
+  每段最多 20,000 条：先写成 gzip 段、落盘并校验 SHA-256，再在同一个事务里删除库内对应的行，并核对删除的行数；
+  生产端库里如果有触发器（删除可能带出别的行）一律拒绝。
+- 每条记录在写入前都用审计自己的解析器检查一遍：**审计读不回来的记录绝不写进归档**（直接拒绝，什么都不改）。
+- 演练不修改任何数据或证据文件（SQLite 的共享内存协调文件 `-shm` 除外），并预测目标段文件是否冲突、
+  是否有范围重叠的遗留段文件、临时文件位置是否被占用。
+  在维护窗口内（没有程序在写），演练结果里的 `would_archive` 就是执行时会归档的条数；`receipts` 显示回执来源。
+  如果演练期间（或执行前的审计期间）有程序改动了数据库，会报错，不给结论、不执行。
 - `stopped` 说明停在哪里：`LIMIT_REACHED`（达到上限）、`NOT_ACKNOWLEDGED`（后面的事件还没投递确认）、
-  `PENDING_SEQUENCE_GAP`（序列有缺口在等待）、`END_OF_JOURNAL`（已全部归档）等。
-- 任何一条缺回执、源文件被改、数据被篡改：**拒绝并报错**（退出码 3）。如果在多段之间被拒绝，报错会写明本次已经提交了多少段；
-  已提交的段都是完整、可审计的。
+  `END_OF_JOURNAL`（已全部归档）等。
+- 执行中途如果被拒绝或出错（退出码 3），报错信息会写明本次**实际已提交**的事件数和段数（从库里读回）。
+  已提交的段都是完整、可审计的，修好问题后再次执行会从断点继续。
+- `--chunk` 很小时速度会明显变慢（每段都要扫描一次相关表）；保持默认 20000 即可。
 
 ### 4.2 消费端压缩（Task 002）
 
@@ -139,6 +150,8 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 | `SNAPSHOT_UNVERIFIABLE`（WAL 存在但缺 `-shm`） | 复制数据库时要连同 `-wal`、`-shm` 一起复制；或先用写入它的程序正常打开并关闭一次，再审计 |
 | `CONCURRENT_MODIFICATION_DETECTED` | 审计期间有程序在写数据；停掉投递/归档后重跑审计 |
 | `ARCHIVE_PATH_RELOCATED` | 运行目录被整体搬动过；确认无误后加 `--allow-relocated-archives`（只读新位置，永不读旧路径） |
+| 归档程序中途崩溃后再执行时报 `SNAPSHOT_UNVERIFIABLE` | 先运行一次 `python -m ftdi_core audit --outdir <运行目录>`（它会正常打开并收尾 WAL），再重新演练、执行 |
+| 归档被拒绝：`overlaps the range` | 之前一次用不同 `--chunk` 中断的运行留下了段文件；用当时的 `--chunk` 重试，或检查后把该文件移出 `archives\` |
 | 压缩被拒绝 | 按提示处理：有缺口、生产端尚未确认、段过大（调小 `--segment-size`）、目录是链接等 |
 
 ## 9. 不能宣称的事实
