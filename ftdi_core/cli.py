@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import sqlite3
 
+from . import __version__
 from .preparation import prepare_archive
 from .service import replay
 from .audit import audit
@@ -40,7 +41,9 @@ def _consumer_retention(args):
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog='python -m ftdi_core',description='FTDI Core v0.2: local verified research runtime')
+    p = argparse.ArgumentParser(prog='python -m ftdi_core',
+                                description=f'FTDI Core v{__version__}: local verified research runtime (no trading)')
+    p.add_argument('--version',action='version',version=f'ftdi-core {__version__}')
     sub = p.add_subparsers(dest='cmd',required=True)
     a = sub.add_parser('prepare',help='Convert a verified Binance aggTrades ZIP into immutable Core JSONL')
     a.add_argument('--archive',type=Path,required=True)

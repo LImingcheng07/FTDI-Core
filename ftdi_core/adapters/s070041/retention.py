@@ -130,11 +130,19 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
         from .external_delivery import event_identity
         read_uri=Path(consumer_db).resolve().as_uri()+'?mode=ro'
         with closing(sqlite3.connect(read_uri,uri=True)) as receipts:
+            # Core divergence from reference_s07_0041 (ADR-007 phase 2): a consumer compacted with retention v2
+            # keeps compacted identities as digest rows; an identical digest is an equally independent receipt.
+            tiered=receipts.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='effect_digests'").fetchone()
             for item in items:
                 if 'outbox' in item:
                     o=item['outbox']
                     eid=event_identity(o['lane'],o['seq'],0,o['raw_sha256'])
-                    if not receipts.execute('SELECT 1 FROM effects WHERE event_id=?',(eid,)).fetchone():
+                    if receipts.execute('SELECT 1 FROM effects WHERE event_id=?',(eid,)).fetchone():
+                        continue
+                    row=receipts.execute('SELECT d.payload_sha256 FROM effect_digests d JOIN lane_ids l '
+                                         'ON l.lane_id=d.lane_id WHERE l.lane=? AND d.epoch=0 AND d.seq=?',
+                                         (o['lane'],o['seq'])).fetchone() if tiered else None
+                    if row is None or not isinstance(row[0],bytes) or row[0].hex()!=o['raw_sha256']:
                         raise ValueError('Independent consumer receipt missing; refuse prune')
         end=start+len(items)   # half-open
         archive=root/'archives'/alias/f'raw_{start:012d}_{end:012d}.jsonl.gz'
