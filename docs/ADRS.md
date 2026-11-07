@@ -66,3 +66,19 @@
 **Implemented now**: only the read-only planner `plan-consumer-retention` (dry run).
 
 **Requires the owner's approval before implementation**: consumer schema v2 (additive tables), the destructive compactor and `rehydrate`. Until then nothing deletes or compacts consumer data.
+
+## ADR-008 -- Timestamp provenance: no latency without a clock model (ACCEPTED for local development, 2026-11-07)
+
+**Context**: the 200-event Windows live pilot had 199 negative `local wall - exchange E` values. Re-analysis (read-only) shows a lower envelope of -601.2 ms (local clock behind the venue), `E - T` of 0-1 ms, and receive times taken with `time.monotonic()`, which on this machine is `GetTickCount64` with 15.625 ms resolution, inside the same loop that persisted each message.
+
+**Decision**: intervals use `perf_counter_ns` only; venue-to-local latency requires a Cristian/NTP-style offset estimate with an explicit, age-growing uncertainty; samples are tagged (`CLOCK_UNCORRECTED`, `OFFSET_STALE`, `OFFSET_UNCERTAIN`, `NEGATIVE_BEYOND_UNCERTAINTY`, `WALL_CLOCK_STEP`, `QUEUED_READ`, `QUEUE_DEPTH_UNKNOWN`) and any tag excludes them from percentiles; percentiles need minimum trusted counts (20/100/1000 for P50/P95/P99) and a report with >1 % negative-beyond-uncertainty samples is INCONCLUSIVE. Venue clock coherence is always stated as an assumption. Specification: `docs/TASK003_TIME_PROVENANCE_DESIGN.md`; implementation: `ftdi_core/timeprov.py`, CLI `analyze-clock-evidence`.
+
+**Consequence**: the pilot yields no latency at all (status NO_CLOCK_MODEL). A future live adapter must timestamp reads in a reader decoupled from persistence and record queue depth and offset samples before any latency claim.
+
+## ADR-009 -- Durability-neutral consumer checkpoint tuning; maintained adapter may diverge from the frozen reference (ACCEPTED, 2026-11-07)
+
+**Context**: the full-day delivery was ~6x slower on the owner's machine because its data lived on a 7200 rpm SATA HDD (fsync ~8.4 ms vs 0.18 ms on the NVMe SSD) and the consumer's SHA `event_id` key dirties random index pages that WAL checkpoints write back (`docs/PERF_WINDOWS_DELIVERY.md`).
+
+**Decision**: `ftdi_core/adapters/s070041/external_delivery.py` `EffectStore` sets `PRAGMA wal_autocheckpoint=16000`. Commits stay `synchronous=FULL`, so durability and the commit-before-ACK contract are unchanged. `synchronous=NORMAL` is rejected. The maintained adapter may carry such documented, tested, semantics-preserving changes; `reference_s07_0041/` stays byte-frozen as compatibility evidence.
+
+**Consequence**: measured -37 % publish time on the HDD (10.77 s -> 6.80 s for 50k events) and -9 % on the SSD. Operational guidance: keep run data on an SSD and use `--batch 1024` for large historical deliveries.

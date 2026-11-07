@@ -13,6 +13,7 @@ from .delivery import local_lab
 from .e2e import reconcile
 from .archive_e2e import reconcile_archive_aware
 from .retention_plan import plan_consumer_retention
+from .timeprov import analyze_pilot_db
 
 
 def main(argv=None) -> int:
@@ -56,6 +57,10 @@ def main(argv=None) -> int:
     g.add_argument('--producer-root',type=Path,help='Run root whose producer ACK window bounds the watermark')
     g.add_argument('--margin',type=int,default=0,help='Extra events kept below the proposed watermark')
     g.add_argument('--report',type=Path,help='Write the JSON plan here (atomic). Default: stdout only')
+    h = sub.add_parser('analyze-clock-evidence',
+                       help='Read-only retro-analysis of a live-capture DB (Task 003); no network')
+    h.add_argument('--pilot-db',type=Path,required=True)
+    h.add_argument('--report',type=Path)
     args = p.parse_args(argv)
     try:
         if args.cmd == 'prepare':
@@ -72,6 +77,9 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'analyze-clock-evidence':
+            result = analyze_pilot_db(args.pilot_db,report_path=args.report)
+            good = True
         elif args.cmd == 'plan-consumer-retention':
             result = plan_consumer_retention(args.consumer_db,producer_root=args.producer_root,
                                              margin=args.margin,report_path=args.report)
@@ -83,8 +91,10 @@ def main(argv=None) -> int:
         else:
             result = reconcile(args.outdir,args.consumer_db)
             good = result['passed']
-        print(json.dumps(result,ensure_ascii=False,indent=2))
+        # ASCII-only JSON: valid under any console/pipe encoding (GBK on Chinese Windows); a non-encodable
+        # path character must never turn a finished audit into an exit-code-3 failure.
+        print(json.dumps(result,ensure_ascii=True,indent=2))
         return 0 if good else 2
     except (ValueError,FileNotFoundError,FileExistsError,KeyError,RuntimeError,ConnectionError,OSError,sqlite3.Error) as exc:
-        print(f'FTDI_CORE_FAIL_CLOSED: {exc}',file=sys.stderr)
+        print('FTDI_CORE_FAIL_CLOSED: ' + str(exc).encode('ascii','backslashreplace').decode('ascii'),file=sys.stderr)
         return 3
