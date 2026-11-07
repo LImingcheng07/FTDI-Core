@@ -35,7 +35,7 @@ python -m ftdi_core plan-consumer-retention --consumer-db C:\ftdi\consumer\effec
 python -m ftdi_core consumer-retention migrate|compact|rehydrate --consumer-db ... [--apply]
 ```
 
-One-command full-day acceptance on your own ZIP (read-only input, new work dir, ~3 GB, evidence JSON):
+One-command full-day acceptance on your own ZIP (read-only input, new work dir, ~4 GB, ~25 min on an SSD, evidence JSON):
 
 ```powershell
 python scripts\acceptance_full_day.py --archive C:\data\BTCUSDT-aggTrades-2024-06-01.zip --checksum C:\data\BTCUSDT-aggTrades-2024-06-01.zip.CHECKSUM --workdir C:\ftdi_acceptance

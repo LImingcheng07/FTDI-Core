@@ -4,31 +4,31 @@
     {
       "step": "prepare (full day)",
       "rc": 0,
-      "wall_s": 10.31
+      "wall_s": 11.06
     },
     {
       "step": "replay",
       "rc": 0,
-      "wall_s": 42.35,
+      "wall_s": 44.51,
       "complete": true
     },
     {
       "step": "lab-e2e (separate consumer process, localhost)",
       "rc": 0,
-      "wall_s": 128.98,
+      "wall_s": 116.81,
       "pass": true,
       "audit_mode": "RESIDENT",
       "delivery": {
         "events_sent": 554441,
         "acknowledged": 554441,
         "remote_duplicates": 0,
-        "wall_seconds": 70.0927
+        "wall_seconds": 58.6579
       }
     },
     {
       "step": "archive-producer dry run (300000)",
       "rc": 0,
-      "wall_s": 29.19,
+      "wall_s": 132.19,
       "status": "DRY_RUN",
       "archived_total": 0,
       "would_archive": 300000,
@@ -36,21 +36,23 @@
         "consumer_hot_rows": 300000,
         "consumer_digests": 0
       },
-      "stopped": "LIMIT_REACHED"
+      "stopped": "LIMIT_REACHED",
+      "pre_audit": "COMPLETE"
     },
     {
       "step": "archive-producer --apply (300000)",
       "rc": 0,
-      "wall_s": 47.64,
+      "wall_s": 179.36,
       "status": "ARCHIVED",
       "archived_total": 300000,
       "archived_new": 300000,
-      "stopped": "LIMIT_REACHED"
+      "stopped": "LIMIT_REACHED",
+      "pre_audit": "COMPLETE"
     },
     {
       "step": "v0.2 audit-e2e refuses the archived prefix",
       "rc": 2,
-      "wall_s": 32.61,
+      "wall_s": 32.81,
       "status": "INCONSISTENT",
       "metrics": {
         "consumer_effects": 554441,
@@ -67,27 +69,27 @@
     {
       "step": "plan-consumer-retention",
       "rc": 0,
-      "wall_s": 0.72,
+      "wall_s": 0.73,
       "status": "PLANNED"
     },
     {
       "step": "consumer-retention compact (dry run)",
       "rc": 0,
-      "wall_s": 47.37,
+      "wall_s": 47.16,
       "status": "DRY_RUN",
       "rows": 500000
     },
     {
       "step": "consumer-retention compact --apply",
       "rc": 0,
-      "wall_s": 137.98,
+      "wall_s": 135.49,
       "status": "COMPACTED",
       "rows": 500000
     },
     {
       "step": "archive-producer dry run (200000)",
       "rc": 0,
-      "wall_s": 11.37,
+      "wall_s": 119.15,
       "status": "DRY_RUN",
       "archived_total": 300000,
       "would_archive": 200000,
@@ -95,21 +97,23 @@
         "consumer_hot_rows": 0,
         "consumer_digests": 200000
       },
-      "stopped": "LIMIT_REACHED"
+      "stopped": "LIMIT_REACHED",
+      "pre_audit": "COMPLETE"
     },
     {
       "step": "archive-producer --apply (200000)",
       "rc": 0,
-      "wall_s": 29.41,
+      "wall_s": 156.44,
       "status": "ARCHIVED",
       "archived_total": 500000,
       "archived_new": 200000,
-      "stopped": "LIMIT_REACHED"
+      "stopped": "LIMIT_REACHED",
+      "pre_audit": "COMPLETE"
     },
     {
       "step": "audit-e2e-archive (producer and consumer compacted)",
       "rc": 0,
-      "wall_s": 86.93,
+      "wall_s": 86.53,
       "status": "COMPLETE",
       "issue_counts": {},
       "metrics": {
@@ -124,26 +128,26 @@
     {
       "step": "replay into a NEW producer run",
       "rc": 0,
-      "wall_s": 36.16,
+      "wall_s": 40.08,
       "complete": true
     },
     {
       "step": "restarted producer resends every event",
       "rc": 0,
-      "wall_s": 119.24,
+      "wall_s": 121.37,
       "pass": true,
       "audit_mode": "ARCHIVE_AWARE",
       "delivery": {
         "events_sent": 554441,
         "acknowledged": 554441,
         "remote_duplicates": 554441,
-        "wall_seconds": 38.3247
+        "wall_seconds": 38.124
       }
     },
     {
       "step": "tampered consumer segment",
       "rc": 2,
-      "wall_s": 83.74,
+      "wall_s": 86.31,
       "status": "INCONSISTENT",
       "issue_counts": {
         "CONSUMER_SEGMENT_SHA256_MISMATCH": 1
@@ -160,7 +164,7 @@
     {
       "step": "consumer-retention rehydrate --apply",
       "rc": 0,
-      "wall_s": 80.01,
+      "wall_s": 81.41,
       "status": "REHYDRATED"
     }
   ],
@@ -246,7 +250,7 @@
         "lanes": {
           "BTC": 554441
         },
-        "wall_seconds": 38.3247
+        "wall_seconds": 38.124
       }
     },
     "tampering detected": {
@@ -262,12 +266,12 @@
       "detail": null
     }
   },
-  "started": "2026-11-07 20:46:51",
+  "started": "2026-11-07 21:37:20",
   "zip_sha256_before": "78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9",
   "python": "3.11.9",
   "sqlite": "3.45.1",
   "ftdi_core_version": "0.3.0",
-  "git_commit": "afa457c340f2017c3b925551875e4baa03d61e8a",
+  "git_commit": "f10533dc8f874959a99162a8c00ce9035ff25ea5",
   "git_tree_clean": true,
   "source": {
     "records": 554441,
@@ -286,5 +290,5 @@
   "zip_unchanged": true,
   "result": "PASS",
   "failure": null,
-  "finished": "2026-11-07 21:02:28"
+  "finished": "2026-11-07 22:00:46"
 }

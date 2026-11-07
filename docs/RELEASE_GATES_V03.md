@@ -13,14 +13,49 @@ Supersedes `RELEASE_GATES_ARCHIVE_AUDIT_DRAFT.md` (kept as the Task 001 record);
 | G4 | Producer archive in the Core CLI: mandatory pre-audit (refuses unless COMPLETE / PENDING_DELIVERY / RETRY_REQUIRED); dry run changes no data or evidence file and predicts what `--apply` does in a maintenance window; independent consumer; digest receipts; exact delete counts; refusal before change; committed progress reported after any failure; explicit stop reason | `tests/test_producer_retention.py` (29, incl. regressions P1–P8, Q1–Q8), `tests/test_tiered_prune.py` (4); full-day acceptance below | PASS |
 | G5 | Timestamp provenance (Task 003): no latency without a clock model, tagged exclusions, minimum counts | `tests/test_timeprov.py` (13); pilot re-analysis NO_CLOCK_MODEL (ADR-008) | PASS |
 | G6 | Independent verification | black-box tests written from the contracts by a separate agent (Codex) without reading the implementation: 48 (audit) + 75 (retention); adversarial reviews: audit C1–C8, retention R1–R6, all fixed with mutation-checked regressions; `archive-producer` reviews: 8 findings P1–P8 (two HIGH: deletion of an unarchived outbox row on a corrupt ledger; archiving that erased an ACK inconsistency), all fixed; the follow-up review confirmed the fixes and found Q1–Q7 (trigger side effects, records the audit cannot read back, overlapping leftover files, blocked temp path, metadata-preserving writes, audit-to-apply window, invalid delivered flag), all fixed. The follow-up session was cut off by its provider before writing a final summary; its reproduction logs were evaluated directly. Re-running all its reproduction cases on the fixed code: every case is refused before any change or ends COMPLETE, except one that changed the ACK ledger inside `prune` between segment write and delete; that led to Q8 (every deleted row is revalidated against the archived record inside the transaction), fixed. Every regression fails on its pre-fix commit (mutation check) | PASS |
-| G7 | Full-day real data with the release code | `scripts/acceptance_full_day.py` on the owner's ZIP (read-only, SHA-256 unchanged) from commit `@@COMMIT@@` (clean tree): **ACCEPTANCE PASS**, see below and `examples/V030_ACCEPTANCE_EVIDENCE.json` | PASS |
+| G7 | Full-day real data with the release code | `scripts/acceptance_full_day.py` on the owner's ZIP (read-only, SHA-256 unchanged) from commit `f10533d` (clean tree): **ACCEPTANCE PASS**, see below and `examples/V030_ACCEPTANCE_EVIDENCE.json` | PASS |
 | G8 | Windows behaviour | all suites with `-W error::ResourceWarning`; directories removed immediately after audits and failures; executed natively, not emulated | PASS |
 | G9 | Release process | version 0.3.0 in `ftdi_core/__init__.py`, `pyproject.toml`, service output; `RELEASE_NOTES_v0.3.0.md`; `release/PACKAGE_MANIFEST.v0.3.0.json` (schema v2) and `dist/FTDI-Core-v0.3.0-windows.zip` built by `scripts/build_release.py`, which refuses a dirty tree. The built ZIP is then extracted to a new directory and both suites and `Check-Release-Manifest.py` are run there; that result and the ZIP SHA-256 are recorded in the annotated local tag `v0.3.0` (not pushed), since this file is itself inside the ZIP | PASS (build inputs); post-build check: tag `v0.3.0` |
 | G10 | Safety | no network beyond 127.0.0.1, no credentials, no trading; owner's ZIP read-only (SHA-256 before = after); the owner's own consumer data was not compacted; no history rewrite, no push | PASS |
 
 ## G7 — full-day acceptance (release code)
 
-@@ACCEPTANCE_TABLE@@
+| Step | Exit | Wall (s) | Outcome |
+|---|---:|---:|---|
+| prepare (full day) | 0 | 11.06 | - |
+| replay | 0 | 44.51 | - |
+| lab-e2e (separate consumer process, localhost) | 0 | 116.81 | sent 554,441, ACKed 554,441, duplicates 0 |
+| archive-producer dry run (300000) | 0 | 132.19 | status DRY_RUN; pre_audit COMPLETE; would_archive 300,000; archived_total 0; stopped LIMIT_REACHED; receipts consumer_hot_rows 300,000, consumer_digests 0 |
+| archive-producer --apply (300000) | 0 | 179.36 | status ARCHIVED; pre_audit COMPLETE; archived_new 300,000; archived_total 300,000; stopped LIMIT_REACHED |
+| v0.2 audit-e2e refuses the archived prefix | 2 | 32.81 | status INCONSISTENT; matched 254,441 |
+| consumer-retention migrate | 0 | 0.33 | status MIGRATED |
+| plan-consumer-retention | 0 | 0.73 | status PLANNED |
+| consumer-retention compact (dry run) | 0 | 47.16 | status DRY_RUN; rows 500,000 |
+| consumer-retention compact --apply | 0 | 135.49 | status COMPACTED; rows 500,000 |
+| archive-producer dry run (200000) | 0 | 119.15 | status DRY_RUN; pre_audit COMPLETE; would_archive 200,000; archived_total 300,000; stopped LIMIT_REACHED; receipts consumer_hot_rows 0, consumer_digests 200,000 |
+| archive-producer --apply (200000) | 0 | 156.44 | status ARCHIVED; pre_audit COMPLETE; archived_new 200,000; archived_total 500,000; stopped LIMIT_REACHED |
+| audit-e2e-archive (producer and consumer compacted) | 0 | 86.53 | status COMPLETE; matched 554,441, compacted 500,000 |
+| replay into a NEW producer run | 0 | 40.08 | - |
+| restarted producer resends every event | 0 | 121.37 | sent 554,441, ACKed 554,441, duplicates 554,441 |
+| tampered consumer segment | 2 | 86.31 | status INCONSISTENT; issues CONSUMER_SEGMENT_SHA256_MISMATCH 1; matched 554,441, compacted 500,000 |
+| consumer-retention rehydrate --apply | 0 | 81.41 | status REHYDRATED |
+
+| Check | Result |
+|---|---|
+| all events delivered | PASS |
+| archive-producer dry run plans 300000 events, all receipted by consumer_hot_rows, changes nothing | PASS |
+| archive-producer archived exactly 300000 events | PASS |
+| v0.2 refusal unchanged | PASS |
+| archive-producer dry run plans 200000 events, all receipted by consumer_digests, changes nothing | PASS |
+| archive-producer archived exactly 200000 events | PASS |
+| producer archive stops at the target | PASS |
+| archive-aware audit COMPLETE | PASS |
+| restart replay creates no new effect | PASS |
+| tampering detected | PASS |
+| legacy writer blocked by trigger | PASS |
+| rehydration identical to the original table | PASS |
+
+Source: 554,441 records, seq 3023902824…3024457264, gaps 0; ZIP SHA-256 `78085fc50146fcd2a228bb95495246c539bacc5cd635268bcbb8a641ce90e3c9` before = after. Commit `f10533d` (clean tree), ftdi-core 0.3.0, Python 3.11.9, SQLite 3.45.1; 2026-11-07 21:37:20 → 2026-11-07 22:00:46. Storage: consumer after compaction + VACUUM (copy) 60.9 MiB, consumer archive 50.8 MiB.
 
 ## Test inventory (296 Core + 45 frozen)
 

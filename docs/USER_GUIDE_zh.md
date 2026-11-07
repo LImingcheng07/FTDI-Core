@@ -123,7 +123,7 @@ python scripts\acceptance_full_day.py --archive D:\data\BTCUSDT-aggTrades-2024-0
 
 在一个**新目录**里跑完整链路，包括：两种顺序的归档与压缩、生产端重启重发、篡改检测、旧程序写入拦截、恢复一致性。
 最后打印 `ACCEPTANCE PASS`，证据保存在 `C:\ftdi_acceptance\acceptance_evidence.json`。
-全天数据在固态硬盘上约 20 分钟，占用约 3 GB；输入的 ZIP 只读，跑前跑后会核对哈希。跑完后可以删除 workdir。
+全天数据在固态硬盘上约 25 分钟，占用约 4 GB；输入的 ZIP 只读，跑前跑后会核对哈希。跑完后可以删除 workdir。
 
 ## 6. 时钟证据分析（Task 003）
 
