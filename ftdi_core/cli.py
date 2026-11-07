@@ -14,6 +14,29 @@ from .e2e import reconcile
 from .archive_e2e import reconcile_archive_aware
 from .retention_plan import plan_consumer_retention
 from .timeprov import analyze_pilot_db
+from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate_consumer
+
+
+def _resolve_lane(args):
+    if getattr(args, 'producer_root', None) is None:
+        return args.lane
+    from .archive_e2e import ArchiveLimits, _load_registry
+    _, registry = _load_registry(Path(args.producer_root).resolve() / 'lane_registry.json', ArchiveLimits())
+    if args.lane not in registry:
+        raise ValueError(f'unknown registry alias: {args.lane}')
+    return registry[args.lane]['scope']
+
+
+def _consumer_retention(args):
+    if args.action == 'migrate':
+        return migrate_consumer_v2(args.consumer_db, apply=args.apply)
+    lane = _resolve_lane(args)
+    if args.action == 'compact':
+        return compact_consumer(args.consumer_db, lane=lane, epoch=args.epoch, content_watermark=args.watermark,
+                                producer_root=args.producer_root, ignore_producer_window=args.ignore_producer_window,
+                                apply=args.apply, segment_size=args.segment_size, crash_stage=args.crash_stage)
+    return rehydrate_consumer(args.consumer_db, lane=lane, epoch=args.epoch, to_watermark=args.to_watermark,
+                              apply=args.apply)
 
 
 def main(argv=None) -> int:
@@ -57,6 +80,25 @@ def main(argv=None) -> int:
     g.add_argument('--producer-root',type=Path,help='Run root whose producer ACK window bounds the watermark')
     g.add_argument('--margin',type=int,default=0,help='Extra events kept below the proposed watermark')
     g.add_argument('--report',type=Path,help='Write the JSON plan here (atomic). Default: stdout only')
+    r = sub.add_parser('consumer-retention', help='Consumer retention v2 (Task 002): migrate / compact / rehydrate; dry run unless --apply')
+    rs = r.add_subparsers(dest='action', required=True)
+    for action in ('migrate', 'compact', 'rehydrate'):
+        q = rs.add_parser(action)
+        q.add_argument('--consumer-db', type=Path, required=True)
+        q.add_argument('--apply', action='store_true', help='Perform the change (default: dry run, writes nothing)')
+        if action != 'migrate':
+            q.add_argument('--lane', required=True, help='Registry alias with --producer-root, else the exact lane scope')
+            q.add_argument('--epoch', type=int, default=0)
+        if action == 'compact':
+            q.add_argument('--watermark', type=int, required=True)
+            window = q.add_mutually_exclusive_group(required=True)
+            window.add_argument('--producer-root', type=Path)
+            window.add_argument('--ignore-producer-window', action='store_true')
+            q.add_argument('--segment-size', type=int, default=20000)
+            q.add_argument('--crash-stage', choices=['after_segment_file', 'after_commit'], help='test only')
+        if action == 'rehydrate':
+            q.add_argument('--to-watermark', type=int)
+            q.add_argument('--producer-root', type=Path, help='Only to resolve --lane as a registry alias')
     h = sub.add_parser('analyze-clock-evidence',
                        help='Read-only retro-analysis of a live-capture DB (Task 003); no network')
     h.add_argument('--pilot-db',type=Path,required=True)
@@ -77,6 +119,9 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'consumer-retention':
+            result = _consumer_retention(args)
+            good = True
         elif args.cmd == 'analyze-clock-evidence':
             result = analyze_pilot_db(args.pilot_db,report_path=args.report)
             good = True

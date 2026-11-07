@@ -77,7 +77,8 @@ def local_lab(root: Path, consumer_db: Path, *, batch=256, max_batches=None, tim
         raise ValueError('Invalid batch or max_batches')
     with tempfile.TemporaryDirectory(prefix='ftdi_e2e_') as td:
         ready=Path(td)/'ready.txt'
-        proc=subprocess.Popen([sys.executable,'-m','ftdi_core.adapters.s070041.consumer_service',
+        # Tier-aware Core consumer: identical to the S07 adapter on v1 DBs, safe on compacted v2 DBs.
+        proc=subprocess.Popen([sys.executable,'-m','ftdi_core.consumer_service',
                                '--db',str(consumer_db.resolve()),'--port','0','--ready-file',str(ready)],
                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:

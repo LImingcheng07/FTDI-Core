@@ -41,7 +41,7 @@ import tempfile
 import zlib
 
 from .adapters.s070041.durable_stream import SCHEMA_VERSION, canonical, scope_of, valid
-from .adapters.s070041.external_delivery import envelope, validate
+from .adapters.s070041.external_delivery import envelope, event_identity, validate
 from .adapters.s070041.multi_lane import ALIAS_RE
 
 REPORT_SCHEMA = 'FTDI-Core-E2E-Archive-Audit-v1'
@@ -80,7 +80,8 @@ METRIC_KEYS = ('producer_outbox', 'producer_acked', 'archived_records', 'archive
                'orphan_consumer_effects', 'content_conflicts', 'invalid_consumer_rows',
                'invalid_producer_rows', 'producer_receipt_inconsistencies',
                'archived_missing_consumer_effects', 'duplicate_identities',
-               'unverifiable_lane_effects', 'source_lines_anchored')
+               'unverifiable_lane_effects', 'source_lines_anchored', 'consumer_compacted_effects',
+               'consumer_segments', 'consumer_segments_parsed')
 STRUCTURAL_INVARIANTS = ('snapshot_consistent', 'consumer_schema_recognized', 'all_lanes_verifiable',
                          'every_source_line_anchored', 'archived_records_fully_parsed',
                          'sequences_contiguous')
@@ -590,6 +591,8 @@ class _Auditor:
         self.snapshots = []
         self.producer_digest = 0
         self.consumer_digest = 0
+        self.consumer_v2 = False
+        self.tiers = {}               # (lane, epoch) -> {'first', 'c', 'lane_id', 'ok'} for compacted consumer ranges
         self.content_claims = []      # (label, path, sha256) of every non-SQLite file the audit relied on
         self.content_changes = []
         self.content_unreadable = []
@@ -616,6 +619,8 @@ class _Auditor:
 
     def run(self):
         self.consumer_ok = self.consumer is not None and self._consumer_schema()
+        if self.consumer_ok:
+            self._consumer_tiers()
         for lane in self.lanes:
             if lane.snapshot is not None:
                 self._audit_lane(lane)
@@ -666,6 +671,143 @@ class _Auditor:
             elif row['epoch'] != 0 or not lane.has(row['seq']):
                 metrics['orphan_consumer_effects'] += 1
                 findings.add('ORPHAN_CONSUMER_EFFECT', lane=alias, seq=row['seq'])
+        if self.consumer_v2:
+            self._digest_tier_pass()
+
+    def _digest_tier_pass(self):
+        """Compacted effects (digest rows) count as consumer effects for orphans, totals and identity digest."""
+        findings, metrics = self.findings, self.metrics
+        for row in self.consumer.conn.execute('SELECT l.lane AS lane, d.epoch, d.seq, d.payload_sha256 '
+                                              'FROM effect_digests d LEFT JOIN lane_ids l ON l.lane_id = d.lane_id '
+                                              'ORDER BY d.lane_id, d.epoch, d.seq'):
+            metrics['consumer_effects'] += 1
+            metrics['consumer_compacted_effects'] += 1
+            digest = bytes(row['payload_sha256']).hex() if isinstance(row['payload_sha256'], bytes) else None
+            scope = row['lane'] if isinstance(row['lane'], str) else None
+            identity = (event_identity(scope, row['seq'], row['epoch'], digest)
+                        if scope is not None and digest is not None else repr(tuple(row)))
+            self.consumer_digest = (self.consumer_digest + _ident(identity, digest)) % _DIGEST_MOD
+            lane = self.by_scope.get(scope) if scope is not None else None
+            if lane is None:
+                metrics['orphan_consumer_effects'] += 1
+                findings.add('ORPHAN_CONSUMER_EFFECT', seq=row['seq'], reason='compacted effect of an unregistered lane')
+            elif not lane.verifiable:
+                metrics['unverifiable_lane_effects'] += 1
+            elif row['epoch'] != 0 or not lane.has(row['seq']):
+                metrics['orphan_consumer_effects'] += 1
+                findings.add('ORPHAN_CONSUMER_EFFECT', lane=lane.alias, seq=row['seq'], tier='digest')
+
+    def _consumer_tiers(self):
+        """Verify a v2 consumer's compacted tiers (segments, chain, digests, overlap) before matching."""
+        from . import consumer_retention as cr
+        findings, metrics, db = self.findings, self.metrics, self.consumer.conn
+        if not cr.has_v2_objects(db):
+            return
+        self.consumer_v2 = True
+        problem = cr.v2_problem(db)
+        if problem:
+            findings.add('CONSUMER_SCHEMA_UNRECOGNIZED', reason=problem)
+            self.consumer_ok = False
+            return
+        root = cr.archive_root(self.consumer_db)
+        redirected = os.path.lexists(root) and _redirected(root)
+        lane_ids = {r['lane']: r['lane_id'] for r in db.execute('SELECT lane_id, lane FROM lane_ids')}
+        registered = set()
+        for state in db.execute('SELECT * FROM retention_state ORDER BY lane, epoch').fetchall():
+            lane, epoch, first, last = state['lane'], state['epoch'], state['first_seq'], state['content_watermark']
+            owner = self.by_scope.get(lane)
+            alias = owner.alias if owner is not None else None
+            if not (isinstance(lane, str) and all(_is_int(v) for v in (epoch, first, last, state['segments']))
+                    and first <= last and isinstance(state['chain_head'], str)):
+                findings.add('CONSUMER_SCHEMA_UNRECOGNIZED', lane=alias, reason='retention_state row has bad values')
+                self.consumer_ok = False
+                continue
+            tier = {'first': first, 'c': last, 'lane_id': lane_ids.get(lane), 'ok': True}
+            self.tiers[(lane, epoch)] = tier
+
+            def bad(code, **detail):
+                tier['ok'] = False
+                findings.add(code, lane=alias, **detail)
+            if tier['lane_id'] is None:
+                bad('CONSUMER_SEGMENT_CONTINUITY', reason='lane_ids entry missing')
+            expected, prev, count = first, cr.GENESIS, 0
+            for seg in db.execute('SELECT * FROM effect_segments WHERE lane = ? AND epoch = ? ORDER BY start_seq',
+                                  (lane, epoch)).fetchall():
+                count += 1
+                metrics['consumer_segments'] += 1
+                start, end, records = seg['start_seq'], seg['end_seq'], seg['record_count']
+                if not all(_is_int(v) for v in (start, end, records)) or not isinstance(seg['sha256'], str):
+                    bad('CONSUMER_SEGMENT_CONTINUITY', reason='segment row has bad values')
+                    continue
+                if start != expected or records != end - start + 1 or not 1 <= records <= self.limits.max_records_per_segment:
+                    bad('CONSUMER_SEGMENT_CONTINUITY', start_seq=start, expected_start=expected)
+                if seg['prev_chain'] != prev or seg['chain'] != cr.segment_chain(prev, lane, epoch, start, end,
+                                                                                 records, seg['sha256']):
+                    bad('CONSUMER_CHAIN_MISMATCH', start_seq=start)
+                expected, prev = end + 1, seg['chain']
+                canonical_path = (cr.segment_relative_path(tier['lane_id'], epoch, start, end)
+                                  if tier['lane_id'] is not None else None)
+                if seg['relative_path'] != canonical_path or redirected:
+                    bad('CONSUMER_SEGMENT_PATH_INVALID', start_seq=start, relative_path=seg['relative_path'])
+                    continue
+                registered.add(canonical_path)
+                file = root / canonical_path
+                data, problem = self._read_archive_file(owner, file, 'consumer segment')
+                if problem:
+                    mapped = {'ARCHIVE_SEGMENT_MISSING': 'CONSUMER_SEGMENT_MISSING',
+                              'ARCHIVE_PATH_CONFLICT': 'CONSUMER_SEGMENT_PATH_INVALID'}.get(problem[0],
+                                                                                           'CONSUMER_SEGMENT_UNREADABLE')
+                    bad(mapped, start_seq=start, **problem[1])
+                    continue
+                if hashlib.sha256(data).hexdigest() != seg['sha256']:
+                    bad('CONSUMER_SEGMENT_SHA256_MISMATCH', start_seq=start)
+                    continue
+                self.content_claims.append((f'consumer_segment:{canonical_path}', file, seg['sha256']))
+                try:
+                    rows = cr.parse_segment(data, lane=lane, epoch=epoch, start_seq=start, end_seq=end, limits=self.limits)
+                except _Reject as rejection:
+                    bad(rejection.code, start_seq=start, **rejection.detail)
+                    continue
+                for row in rows:
+                    found = db.execute('SELECT payload_sha256 FROM effect_digests WHERE lane_id = ? AND epoch = ? '
+                                       'AND seq = ?', (tier['lane_id'], epoch, row['seq'])).fetchone()
+                    if found is None:
+                        bad('CONSUMER_DIGEST_MISSING', seq=row['seq'])
+                    elif not isinstance(found[0], bytes) or found[0].hex() != row['payload_sha256']:
+                        bad('CONSUMER_DIGEST_MISMATCH', seq=row['seq'])
+                metrics['consumer_segments_parsed'] += 1
+            if expected - 1 != last or count != state['segments']:
+                bad('CONSUMER_SEGMENT_CONTINUITY', reason='segments do not tile [first_seq, C]', content_watermark=last)
+            if prev != state['chain_head']:
+                bad('CONSUMER_CHAIN_MISMATCH', reason='chain_head differs from the last segment chain')
+            if tier['lane_id'] is not None:
+                extra = db.execute('SELECT COUNT(*) FROM effect_digests WHERE lane_id = ? AND epoch = ? AND '
+                                   'seq NOT BETWEEN ? AND ?', (tier['lane_id'], epoch, first, last)).fetchone()[0]
+                if extra:
+                    bad('CONSUMER_DIGEST_EXTRA', count=extra)
+            overlap = db.execute('SELECT COUNT(*) FROM effects WHERE lane = ? AND epoch = ? AND seq BETWEEN ? AND ?',
+                                 (lane, epoch, first, last)).fetchone()[0]
+            if overlap:
+                bad('CONSUMER_TIER_OVERLAP', count=overlap)
+        stray_segments = db.execute('SELECT COUNT(*) FROM effect_segments s WHERE NOT EXISTS (SELECT 1 FROM '
+                                    'retention_state r WHERE r.lane = s.lane AND r.epoch = s.epoch)').fetchone()[0]
+        if stray_segments:
+            findings.add('CONSUMER_SEGMENT_CONTINUITY', reason='segment rows without retention_state', count=stray_segments)
+        stray_digests = db.execute('SELECT COUNT(*) FROM effect_digests d WHERE NOT EXISTS (SELECT 1 FROM '
+                                   'retention_state r JOIN lane_ids l ON l.lane = r.lane WHERE l.lane_id = d.lane_id '
+                                   'AND r.epoch = d.epoch)').fetchone()[0]
+        if stray_digests:
+            findings.add('CONSUMER_DIGEST_EXTRA', reason='digest rows without retention_state', count=stray_digests)
+        if os.path.isdir(root) and not redirected:
+            seen = 0
+            for file in sorted(root.rglob('*')):
+                seen += 1
+                if seen > self.limits.max_archive_dir_entries:
+                    findings.add('CONSUMER_SEGMENT_PATH_INVALID', reason='consumer archive has too many entries')
+                    break
+                relative = file.relative_to(root).as_posix()
+                if file.is_file() and relative not in registered:
+                    findings.add('UNREFERENCED_CONSUMER_SEGMENT_FILE', file=relative)
 
     def _expect(self, lane, event, origin, delivered):
         """One published event: dedup by market seq, then compare with the consumer."""
@@ -686,6 +828,25 @@ class _Auditor:
         self.producer_digest = (self.producer_digest
                                 + _ident(event['event_id'], event['payload_sha256'])) % _DIGEST_MOD
         if not self.consumer_ok:
+            return
+        tier = self.tiers.get((lane.scope, 0))
+        if tier is not None and tier['first'] <= seq <= tier['c']:
+            found = None if tier['lane_id'] is None else self.consumer.conn.execute(
+                'SELECT payload_sha256 FROM effect_digests WHERE lane_id = ? AND epoch = 0 AND seq = ?',
+                (tier['lane_id'], seq)).fetchone()
+            if found is None:
+                return  # tier verification already reported the missing digest
+            if origin == 'RESIDENT' and not delivered:
+                metrics['remote_committed_unacked'] += 1
+                lane.retry += 1
+            if isinstance(found[0], bytes) and found[0].hex() == event['payload_sha256']:
+                metrics['matched_effects'] += 1
+                lane.matched += 1
+                if origin == 'ARCHIVE':
+                    metrics['archived_events_matched'] += 1
+            else:
+                metrics['content_conflicts'] += 1
+                findings.add('CONSUMER_TIER_CONTENT_CONFLICT', lane=lane.alias, seq=seq)
             return
         rows = self.consumer.conn.execute(
             'SELECT event_id, lane, seq, epoch, payload_sha256, payload FROM effects '
@@ -1539,7 +1700,7 @@ def _load_registry(path, limits):
     return raw, registry
 
 
-def _report_target(report_path, root, protected, lanes):
+def _report_target(report_path, root, protected, lanes, extra_dirs=()):
     """Resolve and vet the report path against evidence, links/junctions included."""
     target = Path(report_path).resolve()
     if target.is_dir():
@@ -1549,7 +1710,7 @@ def _report_target(report_path, root, protected, lanes):
     key = _norm(target)
     # Compare with both the literal and the link-resolved evidence directories: a junction
     # at <root>/archives must not let the report land on a real archive file elsewhere.
-    directories = [root / 'lanes', root / 'archives']
+    directories = [root / 'lanes', root / 'archives', *extra_dirs]
     for lane in lanes:
         directories.extend([lane.archive_dir, lane.db_path.parent])
     forbidden = set()
@@ -1626,7 +1787,12 @@ def reconcile_archive_aware(root, consumer_db, *, report_path=None, allow_reloca
         plain.extend([lane.source, manifest])
         protected.extend([lane.source, manifest])
     directories = [root / 'archives'] + [lane.archive_dir for lane in lanes]
-    target = _report_target(report_path, root, protected, lanes) if report_path is not None else None
+    consumer_archive = Path(f'{consumer_db}.archive')
+    directories.append(consumer_archive)
+    if consumer_archive.is_dir() and not _redirected(consumer_archive):
+        directories.extend(sorted(p for p in consumer_archive.iterdir() if p.is_dir()))
+    target = (_report_target(report_path, root, protected, lanes, extra_dirs=(consumer_archive,))
+              if report_path is not None else None)
 
     def capture():
         snap = {}
