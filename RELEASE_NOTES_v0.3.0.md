@@ -50,7 +50,8 @@ The consumer `effects` table no longer has to grow forever, and it never forgets
   producer cursor).
 * The adapter prune now also refuses several outbox/delivery rows on one raw record, an ACK for another lane,
   an invalid delivered flag, triggers in the producer DB, and a consumer DB that is a producer lane DB; it checks
-  exact delete counts and table counts inside its transaction and releases its connection when initialisation
+  every row it deletes against the archived record (raw, disposition, outbox, ACK), exact delete counts and
+  table counts inside its transaction, and releases its connection when initialisation
   fails. Direct use of the adapter module stays a low-level tool without the Core audit gate (documented).
 * The producer prune accepts a consumer **digest row with the identical payload SHA** as an independent
   receipt, so producer archiving and consumer compaction can run in either order. A missing or altered
@@ -89,10 +90,10 @@ Guidance: keep run data on an SSD, use `--batch 1024` (`docs/PERF_WINDOWS_DELIVE
 
 | Suite | Result |
 |---|---|
-| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **294 / 294 OK** (65 v0.2 baseline + 229 new) |
+| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **296 / 296 OK** (65 v0.2 baseline + 231 new) |
 | Frozen S07 compatibility (`reference_s07_0041/`) | **45 / 45 OK** |
 | Independent black-box contract tests (Codex, written from the contracts only) | 48 audit + 75 retention, included above |
-| Independent adversarial reviews | audit: C1–C8; retention: R1–R6; producer archive: P1–P8 and follow-up Q1–Q7 — fixed with mutation-checked regressions (P7, slow tiny chunks, documented) |
+| Independent adversarial reviews | audit: C1–C8; retention: R1–R6; producer archive: P1–P8 and follow-ups Q1–Q8 — fixed with mutation-checked regressions (P7, slow tiny chunks, documented) |
 | Full-day real data (554,441 events, owner's ZIP read-only) | `scripts/acceptance_full_day.py`: **ACCEPTANCE PASS** — `examples/V030_ACCEPTANCE_EVIDENCE.json` |
 
 Release gates and evidence: `docs/RELEASE_GATES_V03.md`.

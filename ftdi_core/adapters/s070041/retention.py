@@ -216,15 +216,29 @@ def prune(root,alias,limit=5000,do_vacuum=False,consumer_db=None,crash_stage=Non
             require_no_triggers(db)
             before=table_counts(db)
             for x in items:
-                current=db.execute('SELECT file_index,processed,raw_sha256 FROM raw_journal WHERE id=?',(x['id'],)).fetchone()
-                if (current is None or current['file_index']!=x['file_index'] or
-                    not current['processed'] or current['raw_sha256']!=x['raw_sha256']):
+                # Every row about to be deleted must equal what the committed segment holds.
+                current=db.execute('SELECT * FROM raw_journal WHERE id=?',(x['id'],)).fetchone()
+                if (current is None or current['file_index']!=x['file_index'] or not current['processed'] or
+                        current['raw_sha256']!=x['raw_sha256'] or current['payload']!=x['payload'] or
+                        current['received_ns']!=x['received_ns']):
+                    raise ValueError('Rows changed since archive was prepared; rollback')
+                dispo=db.execute('SELECT outcome,detail FROM disposition WHERE raw_id=?',(x['id'],)).fetchone()
+                if dispo is None or dispo['outcome']!=x['outcome'] or dispo['detail']!=x['detail']:
                     raise ValueError('Rows changed since archive was prepared; rollback')
                 if db.execute('SELECT 1 FROM pending WHERE raw_id=?',(x['id'],)).fetchone():
                     raise ValueError('Pending event not prunable')
-                out=db.execute('SELECT delivered FROM outbox WHERE raw_id=?',(x['id'],)).fetchone()
-                if out is not None and not out['delivered']:
-                    raise ValueError('Unacknowledged event not prunable')
+                outs=db.execute('SELECT * FROM outbox WHERE raw_id=?',(x['id'],)).fetchall()
+                dels=db.execute('SELECT * FROM delivery WHERE raw_id=?',(x['id'],)).fetchall()
+                if 'outbox' in x:
+                    o=x['outbox']
+                    if len(outs)!=1 or outs[0]['delivered']!=1:
+                        raise ValueError('Unacknowledged event not prunable')
+                    if (len(dels)!=1 or outs[0]['payload']!=o['payload'] or
+                            any((r['lane'],r['seq'],r['raw_sha256'])!=(o['lane'],o['seq'],o['raw_sha256'])
+                                for r in (outs[0],dels[0]))):
+                        raise ValueError('ACK evidence changed since archive was prepared; rollback')
+                elif outs or dels:
+                    raise ValueError('Rows changed since archive was prepared; rollback')
             for x in items:
                 raw_id=x['id']
                 counts=(db.execute('DELETE FROM delivery WHERE raw_id=?',(raw_id,)).rowcount,

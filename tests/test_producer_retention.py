@@ -176,7 +176,8 @@ class ArchiveProducerTests(unittest.TestCase):
             return items
         before = self.counts()
         with mock.patch.object(retention, 'collect_archivable', drop_outbox):
-            with self.assertRaisesRegex(ValueError, 'Rows deleted differ'):
+            # caught by the in-transaction revalidation (or, failing that, by the delete counts)
+            with self.assertRaisesRegex(ValueError, 'Rows (changed since archive was prepared|deleted differ)'):
                 retention.prune(self.f.root, 'BTC', 4, consumer_db=self.f.consumer)
         self.assertEqual(self.counts(), before)
         self.assertEqual(self.archived(), 0)
@@ -379,6 +380,41 @@ class ArchiveProducerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'changed during the pre-audit'):
                 self.run_archive(apply=True)
         self.assertEqual(self.archived(), 0)
+
+    def test_q8_ack_changed_between_segment_write_and_delete_rolls_back(self):
+        self.f.ingest(4)
+        self.f.deliver()
+        real = retention.export_gzip
+
+        def change_ack(path, items):   # a writer violating the maintenance window, inside prune
+            result = real(path, items)
+            sql(self.f.db(), "UPDATE delivery SET lane = 'wrong' WHERE seq = 1")
+            return result
+        with mock.patch.object(retention, 'export_gzip', change_ack):
+            with self.assertRaisesRegex(ValueError, 'ACK evidence changed'):
+                self.run_archive(apply=True)
+        self.assertEqual(self.archived(), 0)
+        self.assertEqual(self.counts()[0]['o'], 4)
+        self.assertEqual(reconcile_archive_aware(self.f.root, self.f.consumer)['status'], 'INCONSISTENT')
+
+    def test_q8_disposition_or_payload_changed_before_delete_rolls_back(self):
+        for statement in ("UPDATE disposition SET detail = 'changed' WHERE raw_id = 2",
+                          "UPDATE raw_journal SET received_ns = received_ns + 1 WHERE id = 2",
+                          "UPDATE outbox SET payload = payload || ' ' WHERE seq = 2"):
+            with self.subTest(statement=statement):
+                f = Fixture(tempfile.mkdtemp(prefix='q8_', dir=self.f.base))
+                f.ingest(4)
+                f.deliver()
+                real = retention.export_gzip
+
+                def change(path, items, f=f, statement=statement):
+                    result = real(path, items)
+                    sql(f.db(), statement)
+                    return result
+                with mock.patch.object(retention, 'export_gzip', change):
+                    with self.assertRaisesRegex(ValueError, 'changed since archive was prepared'):
+                        retention.prune(f.root, 'BTC', 4, consumer_db=f.consumer)
+                self.assertEqual(sql(f.db(), "SELECT v FROM meta WHERE k = 'archived_records'"), [])
 
     def test_argument_validation(self):
         self.f.ingest(4)

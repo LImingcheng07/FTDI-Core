@@ -49,7 +49,8 @@ Audit
 7. **Retention never hides an inconsistency.** `archive-producer` runs `audit-e2e-archive` before planning or
    applying and refuses unless the run is `COMPLETE`, `PENDING_DELIVERY` or `RETRY_REQUIRED`; every record is
    validated by the auditor's own parser before it is written; archived rows are exactly the rows of the
-   committed segment (delete and table counts checked in the transaction, no triggers).
+   committed segment (each deleted row revalidated against its archived record, delete and table counts
+   checked in the transaction, no triggers).
 
 ## Module map (new in v0.3)
 

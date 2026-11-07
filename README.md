@@ -14,7 +14,7 @@ after both sides have archived or compacted their history.
 ## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.3.0` folder)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 294 Core + 45 frozen S07 tests + CLI smoke
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 296 Core + 45 frozen S07 tests + CLI smoke
 python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.3.0.json
 ```
 
