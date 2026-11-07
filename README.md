@@ -33,6 +33,7 @@ Maintenance (every command is a **dry run unless `--apply`**; archive files are 
 python -m ftdi_core archive-producer --outdir C:\ftdi\run --lane BTC --consumer-db C:\ftdi\consumer\effects.sqlite3 --limit 500000 [--apply]
 python -m ftdi_core plan-consumer-retention --consumer-db C:\ftdi\consumer\effects.sqlite3 --producer-root C:\ftdi\run
 python -m ftdi_core consumer-retention migrate|compact|rehydrate --consumer-db ... [--apply]
+python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3 [--apply]
 ```
 
 One-command full-day acceptance on your own ZIP (read-only input, new work dir, ~4 GB, ~25 min on an SSD, evidence JSON):
@@ -56,6 +57,7 @@ Keep run data on an SSD (an HDD made delivery ~6× slower, `docs/PERF_WINDOWS_DE
 | `archive-producer` | archive the acknowledged, independently receipted producer prefix | only with `--apply` |
 | `plan-consumer-retention` | what consumer retention could safely compact | no |
 | `consumer-retention migrate / compact / rehydrate` | consumer schema v2, compaction, exact restoration | only with `--apply` |
+| `vacuum-db` | rebuild one DB file to reclaim space; logical content verified identical; original kept, never deleted | only with `--apply` |
 | `analyze-clock-evidence` | timestamp provenance of a live capture; no latency without a clock model | no (optional report) |
 
 Exit codes: **0** complete/done, **2** explicitly incomplete or inconsistent (see the JSON), **3** fail-closed
@@ -76,8 +78,8 @@ All timings are local process times, **not** exchange-to-user latency. Source ma
 | | |
 |---|---|
 | Architecture | `docs/ARCHITECTURE_V1.md` → `V1_1.md` → [`V1_2.md`](docs/ARCHITECTURE_V1_2.md) |
-| Contracts | `docs/DATA_CONTRACT_V1.md`, `docs/ARCHIVE_E2E_AUDIT.md`, `docs/CONSUMER_RETENTION_V2.md`, `docs/TASK003_TIME_PROVENANCE_DESIGN.md` |
-| Decisions | `docs/ADRS.md` (ADR-001 … ADR-009) |
+| Contracts | `docs/DATA_CONTRACT_V1.md`, `docs/ARCHIVE_E2E_AUDIT.md`, `docs/CONSUMER_RETENTION_V2.md`, `docs/STORAGE_MAINTENANCE.md`, `docs/TASK003_TIME_PROVENANCE_DESIGN.md` |
+| Decisions | `docs/ADRS.md` (ADR-001 … ADR-010) |
 | Tests | `docs/TEST_REPORT_V02.md`, `docs/TEST_REPORT_TASK001.md`, `docs/RELEASE_GATES_V03.md` |
 | Development | `CLAUDE.md`, `docs/DEV_WORKFLOW.md`, `tasks/` |
 

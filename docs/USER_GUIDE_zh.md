@@ -114,6 +114,23 @@ python -m ftdi_core consumer-retention rehydrate --consumer-db ... --lane BTC --
 - `rehydrate` 能把数据逐行原样恢复；**归档文件永远不会被删除**。数据库文件要执行 VACUUM 才会真正变小（本工具不自动执行）。
 - 生产端归档与消费端压缩的先后顺序不限。
 
+### 4.3 回收磁盘空间（`vacuum-db`，v0.3.1）
+
+归档/压缩只是把行删掉，SQLite 文件本身不会变小。`vacuum-db` 重建一个数据库文件来回收空间：
+
+```powershell
+python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3            # 演练：可回收多少、需要多少空闲空间
+python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3 --apply    # 执行
+python -m ftdi_core vacuum-db --db C:\ftdi\run\lanes\BTC\state.sqlite3 --apply # 生产端库同理
+```
+
+- 先写出一个新文件，逐表逐行核对与原库**逻辑内容完全相同**（结构、索引、触发器、每一行）后才替换；
+  中途任何一步失败，原库都保持原样。
+- **原文件不会被删除**：它被改名保留为 `effects.sqlite3.pre-vacuum-<时间>`。确认无误（例如跑一次 `audit-e2e-archive`）后，
+  由您自己决定是否删除它——删掉后空间才真正释放。
+- 需要停掉投递等所有使用该库的程序；库被占用时会拒绝（Windows 下改名失败会自动全部撤回）。
+- 需要一份压缩后大小的空闲空间（演练里的 `space_needed_bytes`）。全天实测：压缩后的消费端库约 400 MiB → 约 61 MiB。
+
 ## 5. 一键全天验收（推荐每次升级后执行）
 
 ```powershell
@@ -151,6 +168,7 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 | `CONCURRENT_MODIFICATION_DETECTED` | 审计期间有程序在写数据；停掉投递/归档后重跑审计 |
 | `ARCHIVE_PATH_RELOCATED` | 运行目录被整体搬动过；确认无误后加 `--allow-relocated-archives`（只读新位置，永不读旧路径） |
 | 归档程序中途崩溃后再执行时报 `SNAPSHOT_UNVERIFIABLE` | 先运行一次 `python -m ftdi_core audit --outdir <运行目录>`（它会正常打开并收尾 WAL），再重新演练、执行 |
+| `vacuum-db` 报 `database in use` | 还有程序打开着这个库（投递、审计、另一个窗口）；全部关闭后重试 |
 | 归档被拒绝：`overlaps the range` | 之前一次用不同 `--chunk` 中断的运行留下了段文件；用当时的 `--chunk` 重试，或检查后把该文件移出 `archives\` |
 | 压缩被拒绝 | 按提示处理：有缺口、生产端尚未确认、段过大（调小 `--segment-size`）、目录是链接等 |
 
@@ -171,4 +189,5 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 | `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |
 | `docs/TASK003_TIME_PROVENANCE_DESIGN.md` | 时间溯源规则 |
 | `docs/REAL_ARCHIVE_AUDIT_RESULTS.md` / `docs/REAL_CONSUMER_RETENTION_RESULTS.md` | 全天真实数据证据 |
-| `docs/ADRS.md` | 架构决策记录（ADR-001…009） |
+| `docs/STORAGE_MAINTENANCE.md` | `vacuum-db` 的精确契约 |
+| `docs/ADRS.md` | 架构决策记录（ADR-001…010） |

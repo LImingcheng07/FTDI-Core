@@ -84,3 +84,11 @@
 **Decision**: `ftdi_core/adapters/s070041/external_delivery.py` `EffectStore` sets `PRAGMA wal_autocheckpoint=16000`. Commits stay `synchronous=FULL`, so durability and the commit-before-ACK contract are unchanged. `synchronous=NORMAL` is rejected. The maintained adapter may carry such documented, tested, semantics-preserving changes; `reference_s07_0041/` stays byte-frozen as compatibility evidence.
 
 **Consequence**: measured -37 % publish time on the HDD (10.77 s -> 6.80 s for 50k events) and -9 % on the SSD. Operational guidance: keep run data on an SSD and use `--batch 1024` for large historical deliveries.
+
+## ADR-010 -- Space reclamation by verified rebuild, never by deleting the original (ACCEPTED, 2026-11-07)
+
+**Context**: retention deletes rows, but SQLite only reuses freed pages; the full-day consumer stays ~400 MiB after compaction until a VACUUM (61 MiB). An in-place `VACUUM` rewrites the only copy of the evidence, needs exclusive access, and gives no independent proof that nothing changed; rowids of tables without an INTEGER PRIMARY KEY may be renumbered (FTDI code does not use rowids).
+
+**Decision**: `vacuum-db` (dry run unless `--apply`) checkpoints the WAL (refuses if another connection blocks it), takes a content fingerprint and a logical digest (schema plus every row of every table, ordered by all columns, type-tagged; independent of pages and rowids), runs `VACUUM INTO` a temporary file in the same directory, verifies `integrity_check`, the digest, `user_version`, `application_id` and restores WAL mode, re-checks the fingerprint of the original, and swaps by renames that are undone on failure. The original is kept as `<db>.pre-vacuum-<UTC timestamp>` and is never deleted by FTDI. Contract: `docs/STORAGE_MAINTENANCE.md`.
+
+**Consequence**: the owner decides when to delete the kept original (space is reclaimed then). Requires free space for one compacted copy. On Windows an open handle elsewhere makes the swap fail and every rename is undone; on POSIX the maintenance-window precondition matters more (an idle open connection is not detectable).

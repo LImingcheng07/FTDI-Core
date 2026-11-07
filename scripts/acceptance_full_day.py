@@ -12,7 +12,8 @@ Checks: prepare -> replay -> two-process lab-e2e -> archive-producer dry run + a
 consumer retention v2 compaction (500k) -> archive-producer completed with digest receipts (500k) ->
 audit-e2e-archive COMPLETE ->
 restarted producer resends everything (0 new effects) -> tamper and legacy-writer refusals -> rehydration
-identical to the original consumer table.
+identical to the original consumer table -> vacuum-db on a copy of the compacted consumer (logical digest
+unchanged, original kept, audit COMPLETE).
 """
 from __future__ import annotations
 
@@ -50,7 +51,7 @@ def run(label, args, expect=0):
         out = None
     if isinstance(out, dict):
         for key in ('status', 'pass', 'complete', 'rows', 'audit_mode', 'archived_total', 'archived_new',
-                    'would_archive', 'receipts', 'stopped'):
+                    'would_archive', 'receipts', 'stopped', 'bytes_before', 'bytes_after', 'kind'):
             if key in out:
                 step[key] = out[key]
         if isinstance(out.get('pre_audit'), dict):
@@ -160,6 +161,8 @@ run('replay', ['replay', '--lane', f'BTC={jsonl}', '--outdir', str(run_root), *r
 run('lab-e2e (separate consumer process, localhost)', ['lab-e2e', '--outdir', str(run_root), '--consumer-db',
                                                        str(consumer), '--batch', '1024'])
 original_digest, original_rows = hot_rows(consumer)
+consumer_bytes_uncompacted = consumer.stat().st_size + (Path(f'{consumer}-wal').stat().st_size
+                                                        if Path(f'{consumer}-wal').exists() else 0)
 check('all events delivered', original_rows == records, original_rows)
 
 keep_hot = min(54_441, records // 10)
@@ -224,13 +227,21 @@ run('consumer-retention rehydrate --apply', ['consumer-retention', 'rehydrate', 
                                              str(run_root), '--apply'])
 check('rehydration identical to the original table', hot_rows(rehydrated / consumer.name) == (original_digest,
                                                                                                original_rows))
-vacuum = WORK / 'vacuum.sqlite3'
-with closing(sqlite3.connect(consumer.as_uri() + '?mode=ro', uri=True)) as src, closing(sqlite3.connect(vacuum)) as dst:
-    src.backup(dst)
-with closing(sqlite3.connect(vacuum)) as db:
-    db.execute('VACUUM')
-summary['storage_mib'] = {'consumer_compacted_after_vacuum_copy': round(vacuum.stat().st_size / 2**20, 1),
+vacuumed = WORK / 'vacuumed'
+shutil.copytree(consumer.parent, vacuumed)
+target = vacuumed / consumer.name
+plan = run('vacuum-db dry run (compacted consumer, copy)', ['vacuum-db', '--db', str(target)])
+done = run('vacuum-db --apply (compacted consumer, copy)', ['vacuum-db', '--db', str(target), '--apply'])
+check('vacuum-db keeps every logical row and the original file',
+      done['logical_digest'] == plan['logical_digest'] and Path(done['kept_original']).is_file() and
+      done['bytes_after'] < done['bytes_before'] and hot_rows(target) == (compacted_digest, compacted_hot),
+      {'bytes_before': done['bytes_before'], 'bytes_after': done['bytes_after']})
+after = run('audit-e2e-archive (vacuumed consumer, copy)', ['audit-e2e-archive', '--outdir', str(run_root),
+                                                           '--consumer-db', str(target)])
+check('archive-aware audit COMPLETE after vacuum-db', after['status'] == 'COMPLETE')
+summary['storage_mib'] = {'consumer_before_compaction': round(consumer_bytes_uncompacted / 2**20, 1),
+                          'consumer_compacted_before_vacuum': round(done['bytes_before'] / 2**20, 1),
+                          'consumer_after_vacuum_db': round(done['bytes_after'] / 2**20, 1),
                           'consumer_archive': round(sum(p.stat().st_size for p in
                                                         Path(f'{consumer}.archive').rglob('*.gz')) / 2**20, 1)}
-vacuum.unlink()
 finish(True)

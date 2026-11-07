@@ -17,6 +17,7 @@ from .retention_plan import plan_consumer_retention
 from .timeprov import analyze_pilot_db
 from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate_consumer
 from .producer_retention import archive_producer
+from .storage_maintenance import vacuum_db
 
 
 def _resolve_lane(args):
@@ -92,6 +93,10 @@ def main(argv=None) -> int:
     w.add_argument('--limit',type=int,default=20000,help='At most this many events in this run (default 20000)')
     w.add_argument('--chunk',type=int,default=20000,help='Events per archive segment, 1..20000')
     w.add_argument('--apply',action='store_true',help='Perform the archive (default: dry run, writes nothing)')
+    v = sub.add_parser('vacuum-db',
+                       help='Rebuild one FTDI SQLite file to reclaim space; logical content verified identical, original kept; dry run unless --apply')
+    v.add_argument('--db',type=Path,required=True,help='A producer lane state.sqlite3 or a consumer effects DB')
+    v.add_argument('--apply',action='store_true',help='Perform the rebuild (default: dry run, writes nothing)')
     r = sub.add_parser('consumer-retention', help='Consumer retention v2 (Task 002): migrate / compact / rehydrate; dry run unless --apply')
     rs = r.add_subparsers(dest='action', required=True)
     for action in ('migrate', 'compact', 'rehydrate'):
@@ -131,6 +136,9 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'vacuum-db':
+            result = vacuum_db(args.db,apply=args.apply)
+            good = True
         elif args.cmd == 'archive-producer':
             result = archive_producer(args.outdir,args.lane,consumer_db=args.consumer_db,limit=args.limit,
                                       apply=args.apply,chunk=args.chunk)

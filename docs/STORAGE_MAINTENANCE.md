@@ -34,8 +34,10 @@ directory). A rollback journal `PATH-journal` present → refused (a hot journal
 
 ## Dry run (default)
 
-Strictly read-only: no file is created, changed or deleted (SQLite's `-shm` coordination file excepted when
-the database has WAL frames). Output fields:
+Strictly read-only: no file is created, changed or deleted. Only an **existing** `-shm` coordination file may be
+updated by SQLite when the database has WAL frames; a missing `-shm` is never created: with WAL frames and no
+`-shm` the dry run is refused (`ValueError`, exit 3) and suggests `--apply`, which first recovers and folds the
+WAL with a normal connection (logical content unchanged). Output fields:
 
 | field | meaning |
 |---|---|
