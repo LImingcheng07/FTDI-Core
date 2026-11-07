@@ -12,6 +12,7 @@ from .audit import audit
 from .delivery import local_lab
 from .e2e import reconcile
 from .archive_e2e import reconcile_archive_aware
+from .retention_plan import plan_consumer_retention
 
 
 def main(argv=None) -> int:
@@ -49,6 +50,12 @@ def main(argv=None) -> int:
                    help='Write the JSON report here (atomic; never inside lanes/ or archives/). Default: stdout only')
     f.add_argument('--allow-relocated-archives',action='store_true',
                    help='Accept archive_path values recorded under another run root; only in-root files are read')
+    g = sub.add_parser('plan-consumer-retention',
+                       help='Dry run (Task 002): what consumer retention could safely compact; deletes nothing')
+    g.add_argument('--consumer-db',type=Path,required=True)
+    g.add_argument('--producer-root',type=Path,help='Run root whose producer ACK window bounds the watermark')
+    g.add_argument('--margin',type=int,default=0,help='Extra events kept below the proposed watermark')
+    g.add_argument('--report',type=Path,help='Write the JSON plan here (atomic). Default: stdout only')
     args = p.parse_args(argv)
     try:
         if args.cmd == 'prepare':
@@ -65,6 +72,10 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'plan-consumer-retention':
+            result = plan_consumer_retention(args.consumer_db,producer_root=args.producer_root,
+                                             margin=args.margin,report_path=args.report)
+            good = result['status'] != 'BLOCKED'
         elif args.cmd == 'audit-e2e-archive':
             result = reconcile_archive_aware(args.outdir,args.consumer_db,report_path=args.report,
                                              allow_relocated_archives=args.allow_relocated_archives)

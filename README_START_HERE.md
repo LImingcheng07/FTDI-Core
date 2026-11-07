@@ -41,7 +41,7 @@ changing database schema, pruning, or deleting data. Respond in Chinese.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 ```
 
-Expected Windows-ready patched baseline: **65/65 Core + 45/45 compatibility = 110/110** (verified by the owner on native Windows, 2026-11-06). With Task 001 (branch `feat/archive-e2e-audit`): **154 Core + 45 compatibility**, verified on native Windows 11 / Python 3.11.9 (`docs/TEST_REPORT_TASK001.md`).
+Expected Windows-ready patched baseline: **65/65 Core + 45/45 compatibility = 110/110** (verified by the owner on native Windows, 2026-11-06). With Task 001 (branch `feat/archive-e2e-audit`): **165 Core + 45 compatibility** (incl. the Task 002 read-only planner), verified on native Windows 11 / Python 3.11.9 (`docs/TEST_REPORT_TASK001.md`).
 
 ## Known limits
 
