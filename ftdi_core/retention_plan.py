@@ -102,7 +102,10 @@ def plan_consumer_retention(consumer_db, *, producer_root=None, margin=0, report
                 for d in forbidden_dirs if os.path.lexists(d)):
             raise ValueError('report path would overwrite or sit inside evidence')
 
-    before = [_fingerprint(p, False) for p in protected[:4]]
+    # Fingerprint the database and its WAL/journal, never -shm: a read-only WAL reader legitimately
+    # updates the shared-memory coordination file (the archive auditor uses the same rule).
+    watched = [Path(f'{consumer_db}{s}') for s in ('', '-wal', '-journal')]
+    before = [_fingerprint(p, False) for p in watched]
     windows, producer_snapshots, resolved_root = ({}, [], None)
     if producer_root is not None:
         windows, producer_snapshots, resolved_root = _producer_windows(producer_root, limits)
@@ -127,7 +130,7 @@ def plan_consumer_retention(consumer_db, *, producer_root=None, margin=0, report
                 lanes.append(_plan_lane(db, group, windows, producer_root is not None, margin))
     finally:
         consumer.close()
-    after = [_fingerprint(p, False) for p in protected[:4]]
+    after = [_fingerprint(p, False) for p in watched]
     stable = before == after and consumer.stable and all(s.stable for s in producer_snapshots)
     if not stable:
         blockers.append({'code': 'CONCURRENT_MODIFICATION_DETECTED',

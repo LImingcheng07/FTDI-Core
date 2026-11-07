@@ -132,6 +132,30 @@ class RetentionPlanTests(unittest.TestCase):
             plan_consumer_retention(missing)
         self.assertFalse(missing.exists())
 
+    def test_open_consumer_wal_is_not_a_concurrent_modification(self):
+        """Regression (full-day run): a consumer process that was terminated leaves WAL frames and -shm with
+        no open connection; the read-only reader rebuilds -shm, which is not a concurrent modification."""
+        self.f.ingest(12)
+        rows = self.f.rows()
+        events = Path(self.f.base) / 'events.json'
+        from ftdi_core.adapters.s070041.external_delivery import envelope
+        events.write_text(json.dumps([envelope(r) for r in rows]), encoding='utf-8')
+        writer = ('import json, os, sys\n'
+                  'from ftdi_core.adapters.s070041.external_delivery import EffectStore\n'
+                  'store = EffectStore(sys.argv[1])\n'
+                  'store.db.execute("PRAGMA wal_autocheckpoint=0")\n'
+                  'store.accept(json.load(open(sys.argv[2], encoding="utf-8")))\n'
+                  'os._exit(0)  # terminated like lab-e2e terminates the consumer: WAL and -shm stay behind\n')
+        done = subprocess.run([sys.executable, '-c', writer, str(self.f.consumer), str(events)],
+                              cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.f.ack(rows)
+        self.assertGreater(Path(f'{self.f.consumer}-wal').stat().st_size, 0)
+        self.assertTrue(Path(f'{self.f.consumer}-shm').exists())
+        result = self.plan(producer_root=self.f.root)
+        self.assertTrue(result['snapshot_stable'], result['blockers'])
+        self.assertEqual(result['status'], 'PLANNED')
+
     def test_handles_released_for_windows(self):
         self.f.archived(n=12, limits=(6,))
         self.plan(producer_root=self.f.root)
