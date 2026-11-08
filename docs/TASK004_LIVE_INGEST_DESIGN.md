@@ -1,7 +1,9 @@
 # Task 004 — Live read-only ingestion into Core (design)
 
-Status: **design, not implemented.** Owner decision required only for the real-network pilot (§9); everything
-else is offline and testable on this machine with a localhost fake venue.
+Status: **implemented (v0.4.0)**: phase 1 sealed sessions (`docs/LIVE_CAPTURE.md` §1-§8) and phase 2 chain
+composition + latency evidence (§9); ADR-011. Instead of the run-chain audit of §6, a verified chain is composed
+into one immutable file and replayed by the unchanged pipeline (simpler, reuses every verified check). The
+real-network pilot (§9 below) still needs the owner's explicit go-ahead.
 
 ## 1. Goal and non-goals
 

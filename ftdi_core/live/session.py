@@ -9,8 +9,13 @@ from pathlib import Path
 import time
 
 from .. import __version__
-from .events import FormatError, canonical, check_event, check_symbol, compare, core_event, lane, loads, \
-    parse_rest_page, parse_ws, rest_records_lenient, ws_record_lenient
+import base64
+import binascii
+import re
+
+from .events import FormatError, bytes_records_lenient, canonical, check_event, check_symbol, compare, core_event, \
+    lane, loads, parse_rest_page, parse_ws, rest_records_lenient, ws_record_lenient
+from .limits import limits_problem
 
 SCHEMA = 'FTDI-Live-Session-v1'
 START_SCHEMA = 'FTDI-Live-Capture-Start-v1'
@@ -162,9 +167,18 @@ def evidence_index(ws_records, rest_records, symbol, interpreted, issue):
         if record['kind'] != 'aggTrades' or record['status'] != 200:
             continue
         if record['body'] is None:
-            if record['body_base64'] is not None:
-                issue('RAW_UNPARSEABLE' if index < interpreted['raw_rest'] else 'RAW_AFTER_STOP',
-                      f'raw_rest line {index}: body not UTF-8 or too large')
+            if record['body_base64'] is None:
+                continue
+            issue('RAW_UNPARSEABLE' if index < interpreted['raw_rest'] else 'RAW_AFTER_STOP',
+                  f'raw_rest line {index}: body not UTF-8 or too large')
+            try:
+                venues = bytes_records_lenient(base64.b64decode(record['body_base64'], validate=True))
+            except (binascii.Error, ValueError):
+                issue('RAW_UNPARSEABLE', f'raw_rest line {index}: body_base64 is not base64')
+                continue
+            for venue in venues:
+                rest_count += 1
+                evidence.setdefault(venue['a'], []).append(core_event(venue, symbol))
             continue
         venues, problem = rest_records_lenient(record['body'])
         if problem:
@@ -289,6 +303,9 @@ def manifest_problem(m, directory):
                                  or not _str(previous['session_id']) or not _is_int(previous['last_seq'])
                                  or not _str(previous['manifest_sha256'])):
         return 'previous'
+    problem = options_problem(m['endpoints'], m['public_network'], m['limits'])
+    if problem:
+        return problem
     if recovery and (not isinstance(m['recovered_from'], dict) or not all(
             isinstance(k, str) and k.endswith('.part') and k[:-5] in DATA_FILES and isinstance(v, dict)
             and set(v) == {'bytes', 'sha256'} for k, v in m['recovered_from'].items())):
@@ -308,10 +325,47 @@ def chain_problem(m):
     return None
 
 
-def start_problem(start, m):
-    """CAPTURE_START.json must describe the same capture as the manifest."""
+PUBLIC_ENDPOINTS = {'ws': 'wss://data-stream.binance.vision', 'rest': 'https://data-api.binance.vision'}
+
+
+def options_problem(endpoints, public_network, limits):
+    """Endpoints, network mode and limits must be ones a capture can actually have used."""
+    if type(public_network) is not bool:
+        return 'public_network'
+    if not isinstance(endpoints, dict) or set(endpoints) != {'ws', 'rest'}:
+        return 'endpoints'
+    if public_network:
+        if endpoints != PUBLIC_ENDPOINTS:
+            return 'endpoints differ from the fixed public endpoints'
+    elif not (isinstance(endpoints['ws'], str) and isinstance(endpoints['rest'], str)
+              and re.fullmatch(r'ws://127\.0\.0\.1:[1-9][0-9]{0,4}', endpoints['ws'])
+              and re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{0,4}', endpoints['rest'])):
+        return 'endpoints are not loopback endpoints'
+    return limits_problem(limits, public_network)
+
+
+def start_problem(start, m=None):
+    """CAPTURE_START.json must be well formed and describe the same capture as the manifest."""
     if not isinstance(start, dict) or set(start) != START_KEYS or start['schema'] != START_SCHEMA:
         return 'fields or schema'
+    try:
+        check_symbol(start['symbol'])
+    except ValueError:
+        return 'symbol'
+    if start['lane'] != lane(start['symbol']) or not _str(start['started_utc']) or not _str(start['software_version']):
+        return 'lane, start time or version'
+    if type(start['max_events']) is not int or start['max_events'] < 1 or \
+            type(start['max_seconds']) not in (int, float) or not start['max_seconds'] > 0:
+        return 'capture bounds'
+    previous = start['previous']
+    if previous is not None and (not isinstance(previous, dict)
+                                 or set(previous) != {'session_id', 'last_seq', 'manifest_sha256'}
+                                 or not _str(previous['session_id']) or not _is_int(previous['last_seq'])
+                                 or not _str(previous['manifest_sha256'])):
+        return 'previous'
+    problem = options_problem(start['endpoints'], start['public_network'], start['limits'])
+    if problem or m is None:
+        return problem
     if start['symbol'] != m['symbol'] or start['lane'] != m['lane'] or start['previous'] != m['previous']:
         return 'symbol, lane or previous differ from the manifest'
     if m['sealed_by'] == 'capture' and (start['endpoints'] != m['endpoints']
@@ -472,17 +526,14 @@ def seal_session(session_dir, *, apply=False):
     if (directory / MANIFEST).exists():
         raise ValueError('session is already sealed')
     try:
-        start = json.loads((directory / START).read_bytes().decode('utf-8'))
-        if not isinstance(start, dict) or set(start) != START_KEYS or start['schema'] != START_SCHEMA:
-            raise ValueError('wrong schema or fields')
-        symbol = check_symbol(start['symbol'])
-        if start['lane'] != lane(symbol):
-            raise ValueError('lane does not match the symbol')
-        previous = start['previous']
-        if previous is not None and (not isinstance(previous, dict) or not _is_int(previous.get('last_seq'))):
-            raise ValueError('previous link malformed')
-    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError) as exc:
-        raise ValueError(f'{START} missing or invalid ({exc}); cannot recover') from None
+        start_bytes = (directory / START).read_bytes()
+        start = json.loads(start_bytes.decode('utf-8'))
+        problem = start_problem(start)
+    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError, RecursionError) as exc:
+        problem = f'{type(exc).__name__}: {exc}'
+    if problem:
+        raise ValueError(f'{START} missing or invalid ({problem}); cannot recover')
+    symbol, previous = start['symbol'], start['previous']
     parts, complete = {}, {}
     for name in DATA_FILES:
         part, final = directory / f'{name}.part', directory / name
@@ -537,6 +588,13 @@ def seal_session(session_dir, *, apply=False):
     finals = {'events.jsonl': ''.join(f'{line}\n' for line in kept).encode('utf-8'),
               'raw_ws.jsonl': complete['raw_ws.jsonl'], 'raw_rest.jsonl': complete['raw_rest.jsonl'],
               'clock.jsonl': complete['clock.jsonl']}
+    fields = _recovery_fields(start, symbol, previous, kept, first, last, cut, ws, rest, complete, interpreted, parts)
+    candidate = {**fields, 'schema': SCHEMA, 'session_id': directory.name, 'sealed_utc': utc_iso(),
+                 'software_version': __version__, 'files': {name: facts_of(data) for name, data in finals.items()},
+                 'capture_start_sha256': sha256_bytes(start_bytes)}
+    problem = manifest_problem(candidate, directory) or start_problem(start, candidate)
+    if problem:
+        raise ValueError(f'the recovered session would not be valid ({problem}); nothing written')
     for name, data in finals.items():
         if name not in parts:
             if name == 'events.jsonl' and (directory / name).read_bytes() != data:
@@ -546,17 +604,20 @@ def seal_session(session_dir, *, apply=False):
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+    manifest = finish_manifest(directory, fields)
+    return {**manifest, 'session_dir': str(directory)}
+
+
+def _recovery_fields(start, symbol, previous, kept, first, last, cut, ws, rest, complete, interpreted, parts):
     counts = dict.fromkeys(COUNT_KEYS)
     counts.update(ws_messages=len(ws), rest_pages=sum(r['kind'] == 'aggTrades' for r in rest),
                   clock_samples=complete['clock.jsonl'].count(b'\n'), connections=max((r['conn'] for r in ws), default=0))
-    fields = {'symbol': symbol, 'lane': lane(symbol), 'started_utc': start['started_utc'], 'sealed_by': 'recovery',
-              'first_seq': first, 'last_seq': last, 'event_count': len(kept), 'previous': previous,
-              'chain': 'CONTIGUOUS' if previous else 'FIRST', 'stop_reason': 'RECOVERED',
-              'stop_detail': 'sealed from the complete lines of an interrupted capture'
-                             + (f'; cut before conflicting seq {cut}' if cut is not None else ''),
-              'counts': counts, 'endpoints': start['endpoints'], 'public_network': start['public_network'],
-              'limits': start['limits'], 'interpreted': interpreted,
-              'recovered_from': {f'{name}.part': {'bytes': len(data), 'sha256': sha256_bytes(data)}
-                                 for name, data in parts.items()}}
-    manifest = finish_manifest(directory, fields)
-    return {**manifest, 'session_dir': str(directory)}
+    return {'symbol': symbol, 'lane': lane(symbol), 'started_utc': start['started_utc'], 'sealed_by': 'recovery',
+            'first_seq': first, 'last_seq': last, 'event_count': len(kept), 'previous': previous,
+            'chain': 'CONTIGUOUS' if previous else 'FIRST', 'stop_reason': 'RECOVERED',
+            'stop_detail': 'sealed from the complete lines of an interrupted capture'
+                           + (f'; cut before conflicting seq {cut}' if cut is not None else ''),
+            'counts': counts, 'endpoints': start['endpoints'], 'public_network': start['public_network'],
+            'limits': start['limits'], 'interpreted': interpreted,
+            'recovered_from': {f'{name}.part': {'bytes': len(data), 'sha256': sha256_bytes(data)}
+                               for name, data in parts.items()}}

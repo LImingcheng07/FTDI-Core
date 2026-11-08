@@ -1,21 +1,21 @@
-# FTDI-Core v0.3.1 — auditable local market-data delivery
+# FTDI-Core v0.4.0 — auditable local market-data delivery
 
 **Status:** local research prototype; **not** production certified and **not** a trading program. No API keys,
 no account or trading operations, no outbound network (localhost HTTP only). Python 3.10+, standard library only.
 
 **Chinese user guide (中文使用手册): [`docs/USER_GUIDE_zh.md`](docs/USER_GUIDE_zh.md)** · Release notes:
-[`RELEASE_NOTES_v0.3.1.md`](RELEASE_NOTES_v0.3.1.md) (v0.3.0: [`RELEASE_NOTES_v0.3.0.md`](RELEASE_NOTES_v0.3.0.md)) · Gates and evidence: [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
+[`RELEASE_NOTES_v0.4.0.md`](RELEASE_NOTES_v0.4.0.md) (earlier: `RELEASE_NOTES_v0.3.1.md`, `RELEASE_NOTES_v0.3.0.md`) · Gates and evidence: [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
 
 FTDI-Core turns a verified historical Binance aggTrades ZIP into an immutable event stream, persists it per lane
 with transactional checkpoints, delivers it at-least-once to an **independent consumer process** that commits
 before acknowledging, and proves per event — not by counts — that nothing was lost, duplicated or altered, even
 after both sides have archived or compacted their history.
 
-## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.3.1` folder)
+## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.4.0` folder)
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 345 Core + 45 frozen S07 tests + CLI smoke
-python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.3.1.json
+python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.4.0.json
 ```
 
 ## Typical run
@@ -58,6 +58,9 @@ Keep run data on an SSD (an HDD made delivery ~6× slower, `docs/PERF_WINDOWS_DE
 | `plan-consumer-retention` | what consumer retention could safely compact | no |
 | `consumer-retention migrate / compact / rehydrate` | consumer schema v2, compaction, exact restoration | only with `--apply` |
 | `vacuum-db` | rebuild one DB file to reclaim space; logical content verified identical; original kept, never deleted | only with `--apply` |
+| `live-capture` | read-only public aggTrades into a sealed session (loopback unless `--public-network`) | new session directory |
+| `verify-session` / `seal-session` | verify a session from its raw evidence / recover a killed capture | no / only with `--apply` |
+| `compose-sessions` | verified chain of sessions -> one immutable `events.jsonl` for replay | new directory |
 | `analyze-clock-evidence` | timestamp provenance of a live capture; no latency without a clock model | no (optional report) |
 
 Exit codes: **0** complete/done, **2** explicitly incomplete or inconsistent (see the JSON), **3** fail-closed
@@ -78,14 +81,15 @@ All timings are local process times, **not** exchange-to-user latency. Source ma
 | | |
 |---|---|
 | Architecture | `docs/ARCHITECTURE_V1.md` → `V1_1.md` → [`V1_2.md`](docs/ARCHITECTURE_V1_2.md) |
-| Contracts | `docs/DATA_CONTRACT_V1.md`, `docs/ARCHIVE_E2E_AUDIT.md`, `docs/CONSUMER_RETENTION_V2.md`, `docs/STORAGE_MAINTENANCE.md`, `docs/TASK003_TIME_PROVENANCE_DESIGN.md` |
-| Decisions | `docs/ADRS.md` (ADR-001 … ADR-010) |
+| Contracts | `docs/DATA_CONTRACT_V1.md`, `docs/ARCHIVE_E2E_AUDIT.md`, `docs/CONSUMER_RETENTION_V2.md`, `docs/STORAGE_MAINTENANCE.md`, `docs/LIVE_CAPTURE.md`, `docs/TASK003_TIME_PROVENANCE_DESIGN.md` |
+| Decisions | `docs/ADRS.md` (ADR-001 … ADR-011) |
 | Tests | `docs/TEST_REPORT_V02.md`, `docs/TEST_REPORT_TASK001.md`, `docs/RELEASE_GATES_V03.md` |
 | Development | `CLAUDE.md`, `docs/DEV_WORKFLOW.md`, `tasks/` |
 
 ## Not proven
 
-Authenticated or cross-host delivery; exactly-once for side effects outside the consumer DB; live market
-operation, trusted latency or P99; 24-hour uptime; power-loss, backup/restore; signatures or WORM storage for
+Authenticated or cross-host delivery; exactly-once for side effects outside the consumer DB; sustained live
+operation (the v0.4 collector is tested against a simulated venue on 127.0.0.1; a real-network pilot is the
+owner's decision), trusted latency or P99; 24-hour uptime; power-loss, backup/restore; signatures or WORM storage for
 evidence; L2/L3 book reconstruction. `COMPLETE` covers the supplied local evidence for the observed range, not
 venue completeness before the first sequence. Strong audits assume a quiescent maintenance window.

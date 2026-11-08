@@ -1,6 +1,7 @@
 # Live capture to sealed sessions — contract (Task 004 phase 1)
 
-Status: contract for implementation and black-box tests. Design and rationale: `docs/TASK004_LIVE_INGEST_DESIGN.md`.
+Status: implemented (v0.4.0). The session format `FTDI-Live-Session-v1` is first released with v0.4.0; sessions
+written by pre-release development builds are not supported. Design and rationale: `docs/TASK004_LIVE_INGEST_DESIGN.md`.
 Phase 1 ends at a **verified sealed session** whose `events.jsonl` is replayed by the unchanged pipeline
 (`replay` → `lab-e2e` → `audit-e2e-archive`). The run-chain audit across sessions and the latency report are
 phase 2.
@@ -80,8 +81,9 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   every REST call (connect, headers, body) completes within 8 s and before the capture deadline, else it is
   aborted and recorded as a transport error. A capture therefore ends at most a few seconds after
   `max_seconds` (the final clock sample has its own 2 s budget).
-* HTTP 429 or 418 on any REST call, including the final clock sample → `RATE_LIMITED` (the `Retry-After` value is
-  recorded in `error`, nothing is retried). Other HTTP errors on aggTrades: retried like an empty page. A 200
+* HTTP 429 or 418 on any REST call → `RATE_LIMITED` (the `Retry-After` value is recorded in `error`, nothing is
+  retried). At the final clock sample it turns `MAX_EVENTS` / `MAX_SECONDS` / `INTERRUPTED` into `RATE_LIMITED`;
+  after any other stop the first cause stays and `stop_detail` notes the rate limit. Other HTTP errors on aggTrades: retried like an empty page. A 200
   aggTrades response whose body is larger than `max_rest_body_bytes` or not UTF-8 → `FORMAT_ERROR` (the received
   bytes are kept, base64, in `body_base64`).
 * Stop reasons: `MAX_EVENTS` (exactly `max_events` written), `MAX_SECONDS`, `INTERRUPTED`
@@ -90,7 +92,8 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   `CONNECTION_FAILED`. Every stop seals the session with the contiguous events written so far (possibly none).
   Nothing past a gap or a conflict is ever written to `events.jsonl`.
 * **Conflict cut at sealing**: before sealing, all raw evidence of the session is scanned with the rule of §5
-  (every well-formed record counts, also inside a malformed page and after the stop). If any raw record
+  (every well-formed record counts, also inside a malformed page, inside a body kept as `body_base64` — truncated
+  or not UTF-8: the complete records at its start are salvaged — and after the stop). If any raw record
   contradicts a written event, that seq is ambiguous: `events.jsonl` is cut back to the events **before** the
   smallest such seq (the raw files keep both deliveries) and the stop reason becomes `HALTED_CONFLICT`. A sealed
   session can therefore never show `RAW_CONFLICT`.
@@ -139,12 +142,12 @@ The return value of `capture_session` is the manifest plus `session_dir`.
 | Code | Condition |
 |---|---|
 | `UNSEALED` | no manifest (status `INVALID`) |
-| `MANIFEST_INVALID` | manifest unreadable, wrong schema, wrong field types, inconsistent fields, or `CAPTURE_START.json` describing another capture (symbol, lane, previous; for a capture-sealed session also endpoints, limits, start time) |
+| `MANIFEST_INVALID` | manifest unreadable, wrong schema, wrong field types, inconsistent fields, options no capture can have used (`public_network` not a boolean, endpoints other than the loopback forms or the fixed public pair, `limits` not a valid `CaptureLimits` for the mode, invalid capture bounds), or `CAPTURE_START.json` describing another capture (symbol, lane, previous; for a capture-sealed session also endpoints, limits, start time) |
 | `FILE_MISSING` / `FILE_MISMATCH` | a data file, `CAPTURE_START.json` or a recorded `.part` file absent, or bytes / SHA-256 / line count differ from the manifest; after recovery a raw file that is not the complete lines of its `.part`, `events.jsonl` not a prefix of it, or a `.part` file not recorded |
 | `EVENT_INVALID` | an events line is not a canonical Core event of §2 for this symbol |
 | `EVENT_SEQUENCE_GAP` | `source_seq` not contiguous `first_seq..last_seq`, or count ≠ `event_count` |
 | `EVENT_WITHOUT_RAW_EVIDENCE` | no `raw_ws` message or `raw_rest` aggTrades record with that `a` that is identical (§2) |
-| `RAW_CONFLICT` | a raw record (any well-formed record, also inside a malformed page or after the stop) with `a` in `[first_seq, last_seq]` not identical to the event |
+| `RAW_CONFLICT` | a raw record (any well-formed record, also inside a malformed page, a `body_base64` body or after the stop) with `a` in `[first_seq, last_seq]` not identical to the event |
 | `RAW_UNPARSEABLE` | a raw line is not valid JSON of the documented shape, `n` is not consecutive, or an **interpreted** message/page is not a valid aggTrade record |
 | `CHAIN_MISMATCH` | `chain` incoherent with the recorded `previous` (`FIRST` with a previous, `CONTIGUOUS` without, `first_seq ≠ previous.last_seq + 1`); with `previous`: it is not `VERIFIED`, or its manifest SHA-256 / id / last_seq differ from the recorded link |
 
@@ -164,7 +167,7 @@ valid, contiguous events that are supported by raw evidence, cut before any seq 
 A capture killed between the renames of sealing (some data files already final, the others `.part`) is recovered
 the same way. Refused (`ValueError`, nothing written): a manifest already exists; `CAPTURE_START.json` missing or
 inconsistent; a data file both final and `.part`, or neither; a complete raw line that is malformed or whose `n`
-is not consecutive.
+is not consecutive; a would-be manifest that `verify_session` would reject (checked before anything is written).
 
 ## 7. CLI
 
@@ -184,3 +187,35 @@ a precondition failure (`FTDI_CORE_FAIL_CLOSED: ...`, nothing created).
 It proves that every event in `events.jsonl` was delivered by the venue (raw evidence) and that the range
 `first_seq..last_seq` is contiguous with no conflicting delivery. It does **not** prove that the venue's stream
 before `first_seq` or after `last_seq` was captured, nor any latency (phase 2, Task 003 rules).
+
+## 9. Phase 2: from sessions to the audited pipeline, and latency evidence
+
+**Chain of sessions.** Each capture after the first is started with `--previous-session` (the last non-empty
+sealed session); it continues exactly at `previous.last_seq + 1` (REST catch-up) or seals empty/`GAP_BLOCKED`, so a
+chain never skips a sequence number. A fresh chain (no previous) starts a new, independent range.
+
+`compose_sessions(sessions, output_dir)` / `python -m ftdi_core compose-sessions --session S1 --session S2 ... --output DIR`
+verifies every session against its predecessor in the given order (empty sessions allowed in between), refuses
+any session that is not `VERIFIED` in this chain, refuses if any file of any session changes between the
+verification and the end of the copy (SHA-256 fingerprints before and after), re-checks every output line
+(canonical Core event, contiguous over the declared range), removes its own incomplete output on any refusal, and
+writes a **new** directory with `events.jsonl` (the
+concatenation of the sessions' events, contiguous) and `CHAIN_MANIFEST.json` (`schema: "FTDI-Live-Chain-v1"`,
+symbol, lane, first/last seq, count, per session id, path, manifest SHA-256, events SHA-256, range and stop reason,
+and the SHA-256 of the output). The output is an ordinary immutable source:
+
+```
+python -m ftdi_core replay --lane LIVE=DIR\events.jsonl --outdir RUN
+python -m ftdi_core lab-e2e --outdir RUN --consumer-db CONSUMER
+python -m ftdi_core audit-e2e-archive --outdir RUN --consumer-db CONSUMER
+```
+
+When the chain grows, compose it again **from its head** into a new directory and replay it into a **new** run
+directory with the same consumer: known events are duplicates (no new effect), the new run covers every effect of
+the lane, and the archive-aware audit is `COMPLETE`.
+
+**Latency evidence.** `python -m ftdi_core analyze-clock-evidence --session DIR [--report FILE]` applies the
+ADR-008 rules (`docs/TASK003_TIME_PROVENANCE_DESIGN.md`) to the WebSocket message that **first** delivered each
+event (events recovered only by REST have no read time and are counted separately). Each event uses the
+minimum-RTT clock sample within `max_offset_age_s` of its read time. Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)
+exclude samples; percentiles need 20 / 100 / 1000 trusted samples; nothing is certified.

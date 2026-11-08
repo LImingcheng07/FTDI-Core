@@ -270,7 +270,7 @@ class FakeVenue:
                 pass
 
             def _send(self, status, body, headers=None):
-                data = body.encode()
+                data = body if isinstance(body, bytes) else body.encode()
                 self.send_response(status)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(data)))

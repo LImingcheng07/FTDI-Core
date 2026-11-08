@@ -278,6 +278,104 @@ class LiveReviewRegressions(unittest.TestCase):
         self.assertEqual(result['stop_reason'], 'FORMAT_ERROR')
         self.assertIn('frames', result['stop_detail'])
 
+    # -- second review (M1-M7) ---------------------------------------------------------------------
+
+    def test_m1_conflicts_inside_an_unusable_body_still_count(self):
+        conflicting = json.dumps([{**rest_trade(1), 'p': '1.00000000'}])
+        for label, body, limits in (('not utf-8', conflicting.encode()[:-1] + b'\xff]', {}),
+                                    ('too large', conflicting[:-1] + ',' + ' ' * 400 + ']', {'max_rest_body_bytes': 200})):
+            with self.subTest(label=label):
+                with FakeVenue(connections=[[('trades', 1, 2), ('trade', 4)]], rest_queue=[(200, {}, body)]) as venue:
+                    result, path = self.capture(venue.ws_url, venue.rest_url, limits=limits)
+                self.assertEqual(result['stop_reason'], 'HALTED_CONFLICT', result['stop_detail'])
+                self.assertEqual(result['event_count'], 0)
+                self.assert_verified(path)
+                time.sleep(1.05)   # next session directory name
+
+    def test_m2_a_session_changed_during_composition_is_refused(self):
+        from ftdi_core.live import compose as compose_module
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        real = compose_module.verify_session
+
+        def verify_then_change(session, previous=None):
+            report = real(session, previous=previous)
+            # a writer appends to the session after it was verified, before it is copied
+            (Path(session) / 'clock.jsonl').write_bytes((Path(session) / 'clock.jsonl').read_bytes() + b'\n')
+            return report
+        with mock.patch.object(compose_module, 'verify_session', verify_then_change):
+            with self.assertRaisesRegex(ValueError, 'changed during composition'):
+                compose_module.compose_sessions([path], self.base / 'chain')
+        self.assertFalse((self.base / 'chain').exists())
+
+    def test_m3_a_body_trickled_after_the_headers_is_bounded(self):
+        from ftdi_core.live.endpoints import Endpoint
+        from ftdi_core.live.rest import RestClient
+
+        def headers_then_trickle(conn, stop):
+            conn.recv(4096)
+            conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n'
+                         b'Connection: close\r\n\r\n')
+            while not stop.wait(0.05):
+                conn.sendall(b' ')
+        records = []
+        with RawServer(headers_then_trickle) as server:
+            client = RestClient(Endpoint('http', '127.0.0.1', server.port), symbol='BTCUSDT', recorder=records.append,
+                                min_interval_s=0, max_body_bytes=4096, timeout_s=8.0)
+            started = time.perf_counter()
+            status, body, _ = client.server_time(budget_s=0.5)
+            elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 1.5)
+        self.assertIsNone(body)
+        self.assertIn('no complete answer', records[0]['error'])
+
+    def test_m5_recovery_validates_the_start_record_before_writing(self):
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        for label, change in (('bad previous', {'previous': {'last_seq': 0}}), ('bad start time', {'started_utc': []})):
+            with self.subTest(label=label):
+                target = self.unsealed(path, label.replace(' ', '_'))
+                start = json.loads((target / 'CAPTURE_START.json').read_text(encoding='utf-8'))
+                start.update(change)
+                (target / 'CAPTURE_START.json').write_bytes(json.dumps(start).encode())
+                before = sorted(p.name for p in target.iterdir())
+                with self.assertRaisesRegex(ValueError, 'cannot recover|would not be valid'):
+                    seal_session(target, apply=True)
+                self.assertEqual(sorted(p.name for p in target.iterdir()), before)
+
+    def test_m6_impossible_options_are_invalid_even_when_consistent(self):
+        import hashlib
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        for label, change in (('public flag', {'public_network': 'garbage'}), ('limits', {'limits': None}),
+                              ('endpoints', {'endpoints': {'ws': 'ws://example.org:1', 'rest': 'http://127.0.0.1:2'}})):
+            with self.subTest(label=label):
+                copy = self.base / label.replace(' ', '_') / path.name
+                shutil.copytree(path, copy)
+                start = json.loads((copy / 'CAPTURE_START.json').read_text(encoding='utf-8'))
+                start.update(change)
+                data = json.dumps(start).encode()
+                (copy / 'CAPTURE_START.json').write_bytes(data)
+                manifest = json.loads((copy / 'SESSION_MANIFEST.json').read_text(encoding='utf-8'))
+                manifest.update(change, capture_start_sha256=hashlib.sha256(data).hexdigest())
+                (copy / 'SESSION_MANIFEST.json').write_bytes(json.dumps(manifest).encode())
+                self.assertIn('MANIFEST_INVALID', verify_session(copy)['issue_counts'])
+
+    def test_m7_a_final_rate_limit_after_another_stop_is_noted(self):
+        real, calls = capture_module.RestClient.server_time, []
+
+        def limited_at_end(self, budget_s=None):
+            calls.append(1)
+            if len(calls) >= 2:
+                raise RateLimited(429, '30')
+            return real(self, budget_s)
+        script = [('trades', 1, 2), ('text', 'not json')]
+        with FakeVenue(connections=[script]) as venue:
+            with mock.patch.object(capture_module.RestClient, 'server_time', limited_at_end):
+                result, _ = self.capture(venue.ws_url, venue.rest_url)
+        self.assertEqual(result['stop_reason'], 'FORMAT_ERROR')
+        self.assertIn('rate-limited', result['stop_detail'])
+
     def test_l12_a_rate_limited_final_clock_sample_is_reported(self):
         real, calls = capture_module.RestClient.server_time, []
 

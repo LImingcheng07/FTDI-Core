@@ -106,7 +106,7 @@ def rest_records_lenient(body):
     try:
         obj = loads(body)
     except FormatError as exc:
-        return [], str(exc)
+        return _salvage(body), str(exc)
     if not isinstance(obj, list):
         return [], 'REST aggTrades body is not a JSON array'
     records, problem = [], None
@@ -118,6 +118,36 @@ def rest_records_lenient(body):
         except FormatError as exc:
             problem = problem or str(exc)
     return records, problem
+
+
+def _salvage(text):
+    """Complete, well-formed records at the start of a JSON array that is not valid as a whole (truncated, or
+    followed by garbage): they were delivered and count as evidence."""
+    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    position = text.find('[')
+    if position < 0 or text[:position].strip():
+        return []
+    position += 1
+    records = []
+    while True:
+        while position < len(text) and text[position] in ' \t\r\n,':
+            position += 1
+        try:
+            item, position = decoder.raw_decode(text, position)
+        except (ValueError, FormatError, RecursionError):
+            return records
+        if isinstance(item, dict):
+            try:
+                records.append(_trade_fields(item, 'salvaged REST record'))
+            except FormatError:
+                pass
+
+
+def bytes_records_lenient(data):
+    """Records from raw bytes that are not valid UTF-8 or were cut at the size limit (latin-1 keeps every byte;
+    the trade fields are ASCII)."""
+    records, _ = rest_records_lenient(data.decode('latin-1'))
+    return records
 
 
 def ws_record_lenient(text, symbol):

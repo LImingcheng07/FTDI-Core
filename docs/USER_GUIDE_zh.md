@@ -1,4 +1,4 @@
-# FTDI-Core v0.3.1 使用手册
+# FTDI-Core v0.4.0 使用手册
 
 > 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
 > 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
@@ -10,14 +10,14 @@
 
 - Windows 10/11，Python **3.10+**（只用标准库，无需安装任何依赖包）。
 - **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
-- 解压发布包 `FTDI-Core-v0.3.1-windows.zip`，在解压出的 `FTDI-Core-v0.3.1` 目录里打开 PowerShell。
+- 解压发布包 `FTDI-Core-v0.4.0-windows.zip`，在解压出的 `FTDI-Core-v0.4.0` 目录里打开 PowerShell。
 
 一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
-python -m ftdi_core --version                  # ftdi-core 0.3.1
+python -m ftdi_core --version                  # ftdi-core 0.4.0
 ```
 
 ## 2. 一条完整的数据链路
@@ -144,7 +144,34 @@ python scripts\acceptance_full_day.py --archive D:\data\BTCUSDT-aggTrades-2024-0
 最后打印 `ACCEPTANCE PASS`，证据保存在 `C:\ftdi_acceptance\acceptance_evidence.json`。
 全天数据在固态硬盘上约 25 分钟，占用约 4 GB；输入的 ZIP 只读，跑前跑后会核对哈希。跑完后可以删除 workdir。
 
-## 6. 时钟证据分析（Task 003）
+## 6. 实时只读采集（Task 004，v0.4.0）
+
+把交易所公开的实时成交（aggTrade）采成一个个**封存的时段**，再交给上面同一条链路回放、投递、审计。
+**不需要也不接受任何密钥，只读，不下单。**
+
+```powershell
+# 1) 采集一个时段（默认只允许本机地址；连接真实交易所必须显式加 --public-network）
+python -m ftdi_core live-capture --symbol BTCUSDT --capture-dir C:\ftdi\live --public-network --max-seconds 600
+# 2) 验证（只读）：每条事件都能从原始帧/REST 响应重新推导，序号连续，没有冲突
+python -m ftdi_core verify-session --session C:\ftdi\live\BTCUSDT\session-<时间>
+# 3) 接着采下一个时段，从上一段的最后序号 +1 无缝衔接
+python -m ftdi_core live-capture --symbol BTCUSDT --capture-dir C:\ftdi\live --public-network --previous-session <上一段目录>
+# 4) 把一条时段链拼成一个不可变文件，然后照常 replay / lab-e2e / audit-e2e-archive
+python -m ftdi_core compose-sessions --session <段1> --session <段2> --output C:\ftdi\live_chain1
+python -m ftdi_core replay --lane LIVE=C:\ftdi\live_chain1\events.jsonl --outdir C:\ftdi\live_run1
+# 5) 时延证据（Task 003 规则；没有时钟模型就不给数字）
+python -m ftdi_core analyze-clock-evidence --session <段目录>
+```
+
+- 每个时段保存：原始 WebSocket 消息与 REST 响应（收到即落盘）、规范化事件、时钟样本、清单。
+- 缺口用公开 REST 按序号补齐；补不上就封存缺口之前的部分并停止（`GAP_BLOCKED`），**绝不跳过**。
+  同一序号收到不同内容 → 停止（`HALTED_CONFLICT`），并把有歧义的部分截掉。
+- 进程被杀：`python -m ftdi_core seal-session --session <目录> --apply` 从完整行恢复，原文件保留。
+- 链变长后：从链头重新拼接到一个**新**目录、回放到一个**新**运行目录，投递给同一个消费端——已有事件只记重复。
+- 退出码：0 正常结束（达到条数/时长/Ctrl-C），2 因缺口、冲突、格式错误、限流等提前结束（已封存），3 前置条件失败。
+- **连接公网是您的决定**：本程序只访问 `data-stream.binance.vision` 与 `data-api.binance.vision` 两个公开行情地址。
+
+## 7. 时钟证据分析（Task 003）
 
 ```powershell
 python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.sqlite3>
@@ -153,7 +180,7 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 只读分析实时采集数据库里的时间戳。在没有时钟偏差模型时，**不输出任何延迟或 P99**。
 之前那次 200 条试采中，199 个负值是本机时钟比交易所慢约 0.6 秒造成的，不是"负延迟"。
 
-## 7. 安全规则（产品内置，不要绕过）
+## 8. 安全规则（产品内置，不要绕过）
 
 - 只读行情：不下单、不需要也不接受任何 API Key。
 - 只用本机 127.0.0.1 HTTP，不要暴露到局域网或公网。
@@ -161,7 +188,7 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 - 缺口、冲突、篡改、容量耗尽一律**失败闭锁**，宁可停下也不报假"完整"。
 - 审计期间任何证据文件发生变化，结论一律不是 `COMPLETE`。
 
-## 8. 常见问题
+## 9. 常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -174,22 +201,24 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 | 归档被拒绝：`overlaps the range` | 之前一次用不同 `--chunk` 中断的运行留下了段文件；用当时的 `--chunk` 重试，或检查后把该文件移出 `archives\` |
 | 压缩被拒绝 | 按提示处理：有缺口、生产端尚未确认、段过大（调小 `--segment-size`）、目录是链接等 |
 
-## 9. 不能宣称的事实
+## 10. 不能宣称的事实
 
 - 不是生产系统；没有 24 小时在线稳定性、真实网络 P99、断电灾备认证。
 - `COMPLETE` 只证明所提供区间内的本地证据链一致，不证明首个序号之前的数据完整，也不是交易所的完整性认证。
 - 无法防御能同时改写源文件、生产端、归档和消费端全部证据的人（没有签名或只读存储）。
-- 实时行情接入尚未包含在本版本中。
+- 实时采集只证明时段内事件来自交易所且连续无冲突；不证明时段之外的行情，也不是 24 小时在线认证。
+  时延数字（若有）只是带不确定度的估计，从未经过认证。
 
-## 10. 文档索引
+## 11. 文档索引
 
 | 文档 | 内容 |
 |---|---|
-| `RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
+| `RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
 | `docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
 | `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |
 | `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |
 | `docs/TASK003_TIME_PROVENANCE_DESIGN.md` | 时间溯源规则 |
 | `docs/REAL_ARCHIVE_AUDIT_RESULTS.md` / `docs/REAL_CONSUMER_RETENTION_RESULTS.md` | 全天真实数据证据 |
 | `docs/STORAGE_MAINTENANCE.md` | `vacuum-db` 的精确契约 |
-| `docs/ADRS.md` | 架构决策记录（ADR-001…010） |
+| `docs/LIVE_CAPTURE.md` | 实时采集、时段验证、链拼接的精确契约 |
+| `docs/ADRS.md` | 架构决策记录（ADR-001…011） |

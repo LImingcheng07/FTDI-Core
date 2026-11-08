@@ -20,13 +20,29 @@ class UnusableBody(Exception):
     """A 200 response whose body is too large or not UTF-8 (kept as base64 evidence)."""
 
 
+class _Keep:
+    """Remember the connected socket: http.client detaches it from the connection for 'Connection: close'."""
+
+    def connect(self):
+        super().connect()
+        self.kept_socket = self.sock
+
+
+class _HTTP(_Keep, http.client.HTTPConnection):
+    pass
+
+
+class _HTTPS(_Keep, http.client.HTTPSConnection):
+    pass
+
+
 def _abort(conn):
-    sock = getattr(conn, 'sock', None)
-    if sock is not None:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+    for sock in (getattr(conn, 'kept_socket', None), getattr(conn, 'sock', None)):
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 class RestClient:
@@ -58,10 +74,9 @@ class RestClient:
         self._last = time.perf_counter()
         status = body = body_base64 = error = retry_after = None
         if self.endpoint.scheme == 'https':
-            conn = http.client.HTTPSConnection(self.endpoint.host, self.endpoint.port, timeout=budget,
-                                               context=ssl.create_default_context())
+            conn = _HTTPS(self.endpoint.host, self.endpoint.port, timeout=budget, context=ssl.create_default_context())
         else:
-            conn = http.client.HTTPConnection(self.endpoint.host, self.endpoint.port, timeout=budget)
+            conn = _HTTP(self.endpoint.host, self.endpoint.port, timeout=budget)
         timer = threading.Timer(budget, _abort, args=(conn,))
         timer.daemon = True
         timer.start()

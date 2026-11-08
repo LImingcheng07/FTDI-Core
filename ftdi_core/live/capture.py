@@ -1,7 +1,7 @@
 """Live capture engine (docs/LIVE_CAPTURE.md §3): reader thread -> bounded queue -> validating writer -> sealed session."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict
 import queue
 import random
 import threading
@@ -10,37 +10,12 @@ from pathlib import Path
 
 from .. import __version__
 from .endpoints import resolve
+from .limits import CaptureLimits
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
 from .rest import RateLimited, RestClient, UnusableBody
 from .session import (START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
                       parse_raw, previous_link, raw_rest_record, raw_ws_record, utc_iso, write_new_json)
 from .wsclient import ConnectionClosed, WebSocket, WebSocketError
-
-
-@dataclass(frozen=True, kw_only=True)
-class CaptureLimits:
-    queue_size: int = 10000
-    max_pending: int = 100000
-    gap_wait_ms: int = 200
-    gap_timeout_s: float = 10.0
-    max_rest_pages_per_gap: int = 10
-    rest_min_interval_s: float = 0.35
-    max_reconnects: int = 5
-    ws_read_timeout_s: float = 30.0
-    max_message_bytes: int = 1048576
-    max_rest_body_bytes: int = 2097152
-    clock_interval_s: float = 60.0
-    fsync_every: int = 256
-
-    def __post_init__(self):
-        for field in fields(self):
-            value = getattr(self, field.name)
-            if field.type in (int, 'int'):
-                ok = type(value) is int and (value >= 0 if field.name in ('gap_wait_ms', 'max_reconnects') else value >= 1)
-            else:
-                ok = type(value) in (int, float) and value >= 0 and (field.name == 'rest_min_interval_s' or value > 0)
-            if not ok:
-                raise ValueError(f'CaptureLimits.{field.name} has an invalid value: {value!r}')
 
 
 class _Stop(Exception):
@@ -390,6 +365,8 @@ class _Capture:
                 if stop_reason in ('MAX_EVENTS', 'MAX_SECONDS', 'INTERRUPTED'):
                     detail = f'final clock sample after {stop_reason}: {exc}'
                     stop_reason = 'RATE_LIMITED'
+                else:
+                    detail = f'{detail}; final clock sample rate-limited: {exc}'
         cut = self._conflict_cut()
         if cut is not None:
             stop_reason, detail = 'HALTED_CONFLICT', (f'raw evidence contradicts written seq {cut}; events cut '
