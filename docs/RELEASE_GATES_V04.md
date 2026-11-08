@@ -13,7 +13,7 @@ hold: the historical pipeline, retention and `vacuum-db` are unchanged.
 | L5 | Latency only under ADR-008 rules (nearest minimum-RTT sample, exclusion tags, minimum counts), never certified | `tests/test_live_chain.py`; loopback acceptance (ESTIMATED on loopback, P99 withheld for lack of samples) | PASS |
 | L6 | Network rule: loopback only unless `--public-network`, which selects exactly the two public market-data hosts; refused before any socket otherwise; no key, no private endpoint, no order | endpoint tests (black-box and review: 18 unusual URL forms) | PASS |
 | L7 | Independent review | Codex: black-box suite from the contract; adversarial review 12 findings (L1–L12); verification 7 findings (M1–M7); third pass 6 findings (N1: a transient, consistently forged change of an original during composition — fixed by composing from private verified snapshots; N2/N4 loopback port handling; N3 retained `.part` files in fingerprints; N5 recovery verified on a private copy before writing; N6 cleanup on a failing chain-manifest write); fourth pass: N1–N6 confirmed fixed; remaining findings need a concurrent writer racing a maintenance command (junction or directory inserted mid-run, a session's evidence replaced coherently during the snapshot) and are outside the documented maintenance-window precondition and trust boundary (`docs/LIVE_CAPTURE.md` §8); output-inside-a-session is now refused, the recovery check directory is created with `mkdtemp`, cleanup covers every failure. Every regression fails on its pre-fix commit (mutation-checked) | PASS |
-| L8 | No regression of the historical pipeline | full-day acceptance `scripts/acceptance_full_day.py` from the release code: @@FULLDAY@@ | PASS |
+| L8 | No regression of the historical pipeline | full-day acceptance `scripts/acceptance_full_day.py` from the release code: **ACCEPTANCE PASS** from commit `bff6f9b` (clean tree), 554,441 events, owner's ZIP read-only (SHA-256 unchanged), incl. `vacuum-db` 404.6 → 60.9 MiB; `examples/V040_ACCEPTANCE_EVIDENCE.json` | PASS |
 | L9 | Suites and package | Core 409 (1 skipped by design), frozen S07 45, `-W error::ResourceWarning`, native Windows 11; extracted release ZIP verified (recorded in tag `v0.4.0`) | PASS |
 
 ## Live pipeline acceptance on 127.0.0.1 (`scripts/acceptance_live_loopback.py`)
@@ -23,9 +23,9 @@ dropped connection with catch-up (99 events by REST), periodic duplicate deliver
 
 | Session | Range | Events | Stop | Chain | WS messages | WS duplicates | REST records | Reconnects | Gaps repaired | Verify |
 |---|---|---:|---|---|---:|---:|---:|---:|---:|---|
-| `session-20261108T135840Z` | 1..1000 | 1000 | MAX_EVENTS | FIRST | 980 | 19 | 40 | 0 | 1 | VERIFIED |
-| `session-20261108T135843Z` | 1001..2000 | 1000 | MAX_EVENTS | CONTIGUOUS | 920 | 18 | 99 | 1 | 1 | VERIFIED |
-| `session-20261108T135847Z` | 2001..2500 | 500 | MAX_EVENTS | CONTIGUOUS | 510 | 9 | 0 | 0 | 0 | VERIFIED |
+| `session-20261108T141529Z` | 1..1000 | 1000 | MAX_EVENTS | FIRST | 980 | 19 | 40 | 0 | 1 | VERIFIED |
+| `session-20261108T141531Z` | 1001..2000 | 1000 | MAX_EVENTS | CONTIGUOUS | 920 | 18 | 99 | 1 | 1 | VERIFIED |
+| `session-20261108T141534Z` | 2001..2500 | 500 | MAX_EVENTS | CONTIGUOUS | 509 | 9 | 0 | 0 | 0 | VERIFIED |
 
 | Check | Result |
 |---|---|
@@ -41,9 +41,11 @@ dropped connection with catch-up (99 events by REST), periodic duplicate deliver
 | archive-aware audit of the longer chain COMPLETE | PASS |
 | latency evidence follows ADR-008 (never certified) | PASS |
 
-Latency evidence of session 1 (loopback, this machine only): status ESTIMATED, 536 trusted of 960 samples, excluded tags {'QUEUED_READ': 424}, P50 0.226 ms, P95 0.618 ms, P99: insufficient samples (need 1000 trusted); 40 events recovered by REST only (no read time). ftdi-core 0.4.0, Python 3.11.9, SQLite 3.45.1, 2026-11-08 21:58:40 → 2026-11-08 21:58:50.
+Latency evidence of session 1 (loopback, this machine only): status ESTIMATED, 661 trusted of 960 samples, excluded tags {'QUEUED_READ': 299}, P50 -0.115 ms, P95 0.335 ms, P99: insufficient samples (need 1000 trusted); 40 events recovered by REST only (no read time). ftdi-core 0.4.0, Python 3.11.9, SQLite 3.45.1, 2026-11-08 22:15:29 → 2026-11-08 22:15:37.
 
-Evidence: `examples/V040_LIVE_LOOPBACK_EVIDENCE.json` (commit `5b6b7f9`).
+On loopback the true delay is below a millisecond while the offset uncertainty is about 1 ms (the venue time has 1 ms resolution), so a percentile may be slightly negative within its uncertainty: these numbers show that the ADR-008 rules work end to end; they are not a latency measurement.
+
+Evidence: `examples/V040_LIVE_LOOPBACK_EVIDENCE.json` (commit `bff6f9b`).
 
 ## Not proven
 
