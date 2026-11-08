@@ -124,9 +124,14 @@ def uncertainty_at(estimate, wall_ns, policy=TimePolicy()):
 
 
 def classify_events(events, estimate, policy=TimePolicy()):
-    """One LatencyEvidence per event; exclusion tags make a sample untrusted."""
+    """One LatencyEvidence per event; exclusion tags make a sample untrusted.
+
+    ``estimate`` is one OffsetEstimate (or None) for all events, or a callable ``event -> OffsetEstimate | None``
+    (e.g. the nearest minimum-RTT sample of a long capture)."""
+    estimate_for = estimate if callable(estimate) else (lambda event: estimate)
     evidences, stepped, previous = [], False, None
     for event in events:
+        estimate = estimate_for(event)
         tags = []
         raw = (event.read_wall_ns - event.venue_event_ms * 1_000_000) / 1e6
         if previous is not None and event.read_perf_ns is not None and previous.read_perf_ns is not None:

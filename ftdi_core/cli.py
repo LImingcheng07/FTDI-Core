@@ -19,6 +19,8 @@ from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate
 from .producer_retention import archive_producer
 from .storage_maintenance import vacuum_db
 from .live import NORMAL_STOPS, capture_session, seal_session, verify_session
+from .live.compose import compose_sessions
+from .live.latency import analyze_session
 
 
 def _resolve_lane(args):
@@ -108,6 +110,10 @@ def main(argv=None) -> int:
     vs = sub.add_parser('verify-session',help='Read-only verification of a sealed live session')
     vs.add_argument('--session',type=Path,required=True)
     vs.add_argument('--previous',type=Path)
+    cs = sub.add_parser('compose-sessions',
+                        help='Verify a chain of sealed sessions and write one immutable events.jsonl for replay')
+    cs.add_argument('--session',type=Path,action='append',required=True,help='In chain order; repeat')
+    cs.add_argument('--output',type=Path,required=True,help='New directory')
     ss = sub.add_parser('seal-session',help='Seal a killed capture from its complete lines; dry run unless --apply')
     ss.add_argument('--session',type=Path,required=True)
     ss.add_argument('--apply',action='store_true')
@@ -136,7 +142,9 @@ def main(argv=None) -> int:
             q.add_argument('--producer-root', type=Path, help='Only to resolve --lane as a registry alias')
     h = sub.add_parser('analyze-clock-evidence',
                        help='Read-only retro-analysis of a live-capture DB (Task 003); no network')
-    h.add_argument('--pilot-db',type=Path,required=True)
+    source = h.add_mutually_exclusive_group(required=True)
+    source.add_argument('--pilot-db',type=Path,help='S07-005 capture.sqlite3 (historical pilot)')
+    source.add_argument('--session',type=Path,help='A verified live session directory')
     h.add_argument('--report',type=Path)
     args = p.parse_args(argv)
     try:
@@ -162,6 +170,9 @@ def main(argv=None) -> int:
         elif args.cmd == 'verify-session':
             result = verify_session(args.session,previous=args.previous)
             good = result['status'] == 'VERIFIED'
+        elif args.cmd == 'compose-sessions':
+            result = compose_sessions(args.session,args.output)
+            good = True
         elif args.cmd == 'seal-session':
             result = seal_session(args.session,apply=args.apply)
             good = True
@@ -176,7 +187,13 @@ def main(argv=None) -> int:
             result = _consumer_retention(args)
             good = True
         elif args.cmd == 'analyze-clock-evidence':
-            result = analyze_pilot_db(args.pilot_db,report_path=args.report)
+            if args.session is not None:
+                result = analyze_session(args.session)
+                if args.report is not None:
+                    from .live.session import write_new_json
+                    write_new_json(args.report,result)
+            else:
+                result = analyze_pilot_db(args.pilot_db,report_path=args.report)
             good = True
         elif args.cmd == 'plan-consumer-retention':
             result = plan_consumer_retention(args.consumer_db,producer_root=args.producer_root,
