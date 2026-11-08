@@ -79,6 +79,7 @@ def analyze_session(session_dir, *, policy=TimePolicy()):
                   events_first_delivered_by_ws=len(events), events_recovered_by_rest_only=rest_only,
                   clock_samples=len(samples), clocks=assess_clocks(policy),
                   session_wall_clock={'implementation': wall_clock, 'resolution_ms': resolution_ms},
-                  definition='latency = (read_wall_ns - offset) - venue E; read time is taken immediately after '
+                  definition='latency = (read_wall + offset) - venue E, offset = venue clock minus local wall clock; '
+                             'read time is taken immediately after '
                              'the WebSocket read in a reader thread that does not persist (queue depth recorded)')
     return result

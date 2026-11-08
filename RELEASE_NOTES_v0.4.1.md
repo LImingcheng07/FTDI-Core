@@ -54,6 +54,12 @@ The independent review (Codex) of the first v0.4.1 candidate found four defects,
 an absurd clock resolution passed verification and crashed the analysis (F1); a jittered first read became the
 reference and tagged every later read (F2, inherited from v0.4.0); slow drift within the policy looked like a step
 with sparse reads (F3); name resolution and connection set-up were not bounded by the deadline (F4, inherited).
+Its second pass confirmed F1-F4 fixed and found seven more, also fixed: the reads-only heuristic depended on the
+direction of an early step and paired medians of different reads (R2-1, now pairwise majority votes with drift per
+pair); an absurd interval stamp in a VERIFIED session crashed the analysis (R2-2, every evidence integer and venue
+integer is now bounded to 64 bits); a socket-construction error prevented trying the next address (R2-3); a
+non-OSError in the resolver became a KeyError (R2-4); an expired deadline still started a resolver thread (R2-5);
+the design document had the offset sign reversed and an outdated status (R2-6, R2-7).
 
 ## Compatibility
 
@@ -67,6 +73,8 @@ with sparse reads (F3); name resolution and connection set-up were not bounded b
   the new status `NO_TRUSTED_SAMPLES` and the field `session_wall_clock`. `analyze-clock-evidence --pilot-db` has
   no interval stamps and is unchanged. The model's `OffsetSample` and `OffsetEstimate` gained optional fields
   (`t0_perf_ns`, `t1_perf_ns`; `at_perf_ns`); existing calls keep working.
+* `verify-session` rejects integers outside 0..2^63−1 in evidence files and venue messages (never produced
+  by a real capture; SQLite could not store them either).
 * No change to the historical pipeline, the delivery protocol, the consumer or its databases, retention,
   `archive-producer` or `vacuum-db`.
 

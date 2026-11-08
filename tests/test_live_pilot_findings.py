@@ -350,6 +350,116 @@ class PilotFindingTests(unittest.TestCase):
             self.assertIsNone(status)
             self.assertIn('SetupTimeout', records[0]['error'])
 
+    # -- review of v0.4.1 (Codex, round 2): R2-1..R2-5 ------------------------------------------------------
+    def test_p13_the_heuristic_does_not_depend_on_the_direction_of_a_shift(self):
+        plain = OffsetEstimate(offset_ms=0.0, uncertainty_ms=2.0, at_wall_ns=BASE + 5_000 * MS, rtt_ms=1.0,
+                               samples_used=1, samples_rejected=0)
+        # an early step after two consistent reads, both directions (Codex: the downward one was trusted)
+        for size in (9, -9, 30, -30):
+            evidence = classify_events(self._reads([0, 0] + [size] * 30), plain)
+            self.assertEqual([e.trusted for e in evidence], [True, True] + [False] * 30, size)
+            self.assertTrue(all('WALL_CLOCK_STEP' in e.tags for e in evidence[2:]), size)
+        # mirrored sequences give mirrored decisions
+        for levels in ([0, 0, 7, 0, -6, 0, 0, 4], [9] + [0] * 30, [0] * 10 + [-5.6] * 4 + [0] * 25,
+                       [0, 0, 0, 30, 30, 30, 30, 30], [0] * 6 + [9]):
+            up = classify_events(self._reads(levels), plain)
+            down = classify_events(self._reads([-v for v in levels]), plain)
+            self.assertEqual([e.tags for e in up], [e.tags for e in down], levels)
+        # sparse reads (120 s apart) drifting at +-90 ppm against the interval clock, fresh estimates: all trusted
+        for ppm in (90, -90):
+            reads = [EventTimes(venue_event_ms=(BASE + i * 120_000 * MS - 40 * MS) // MS,
+                                read_wall_ns=BASE + i * 120_000 * MS + i * 120_000 * MS * ppm // 1_000_000,
+                                read_perf_ns=i * 120_000 * MS, queue_depth_at_read=0) for i in range(30)]
+
+            def fresh(event, ppm=ppm):
+                drift_ms = event.read_perf_ns / MS * ppm / 1_000_000
+                return OffsetEstimate(-drift_ms, 2.0, event.read_wall_ns, 1.0, 1, 0)
+            evidence = classify_events(reads, fresh)
+            self.assertTrue(all(e.trusted for e in evidence), (ppm, [e.tags for e in evidence][:4]))
+        # no two consecutive reads agree: no reference, nothing trusted; a single read has nothing to disagree with
+        alternating = classify_events(self._reads([0, 9] * 10), plain)
+        self.assertTrue(all(e.tags == ('READ_STAMP_OUTLIER',) for e in alternating))
+        self.assertEqual(classify_events(self._reads([0]), plain)[0].tags, ())
+
+    def test_p14_integers_beyond_64_bits_make_the_session_invalid_not_the_analysis_crash(self):
+        from ftdi_core.live.events import FormatError, parse_ws
+        from ftdi_core.live.latency import analyze_session
+        from ftdi_core.live.session import MANIFEST, facts_of, verify_session
+        from ftdi_core.live import session as session_module
+        self.assertTrue(session_module._is_int(2 ** 63 - 1))
+        self.assertFalse(session_module._is_int(2 ** 63))
+        message = json.dumps({'e': 'aggTrade', 'E': 2 ** 63, 's': 'BTCUSDT', 'a': 1, 'p': '1.0', 'q': '1.0', 'f': 1,
+                              'l': 1, 'T': 1, 'm': True, 'M': True})
+        with self.assertRaises(FormatError):
+            parse_ws(message, 'BTCUSDT')
+        with FakeVenue(connections=[[('trades', 1, 5)]]) as venue:
+            result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                     max_events=5, max_seconds=10.0, limits=FAST)
+        session = Path(result['session_dir'])
+        lines = [json.loads(line) for line in (session / 'clock.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertTrue(lines)
+        for line in lines:   # Codex's reproduction: coherent, consistent stamps far beyond 64 bits
+            line['t0_perf_ns'] = 10 ** 400
+            line['t1_perf_ns'] = 10 ** 400 + 1_000_000
+            line['t1_wall_ns'] = line['t0_wall_ns'] + 1_000_000
+        data = ''.join(json.dumps(line) + '\n' for line in lines).encode('utf-8')
+        (session / 'clock.jsonl').write_bytes(data)
+        manifest = json.loads((session / MANIFEST).read_bytes().decode('utf-8'))
+        manifest['files']['clock.jsonl'] = facts_of(data)
+        (session / MANIFEST).write_text(json.dumps(manifest), encoding='utf-8')
+        report = verify_session(session)
+        self.assertEqual(report['status'], 'INVALID')
+        with self.assertRaisesRegex(ValueError, 'not VERIFIED'):
+            analyze_session(session)
+
+    def test_p15_connection_setup_falls_back_reports_and_starts_nothing_after_the_deadline(self):
+        import types
+        from ftdi_core.live import netconnect
+        real = socket
+
+        def stand_in(getaddrinfo, make_socket=real.socket):   # replaces only netconnect's view of the socket module
+            return types.SimpleNamespace(getaddrinfo=getaddrinfo, socket=make_socket, SOCK_STREAM=real.SOCK_STREAM)
+        with FakeVenue() as venue:
+            port = int(venue.rest_url.rsplit(':', 1)[1])
+            # R2-3: the first address's family is unavailable locally (socket construction fails): the next is tried
+            created = []
+
+            def make_socket(family, kind, proto):
+                created.append(family)
+                if family == real.AF_INET6:
+                    raise OSError(10047, 'address family not supported (simulated)')
+                return real.socket(family, kind, proto)
+            addresses = [(real.AF_INET6, real.SOCK_STREAM, 6, '', ('::1', port, 0, 0)),
+                         (real.AF_INET, real.SOCK_STREAM, 6, '', ('127.0.0.1', port))]
+            with mock.patch.object(netconnect, 'socket', stand_in(lambda *a, **k: addresses, make_socket)):
+                sock = netconnect.connect('127.0.0.1', port, time.perf_counter() + 2.0)
+            sock.close()
+            self.assertEqual(created, [real.AF_INET6, real.AF_INET])
+            # R2-4: a non-OSError failure of the lookup is a recorded resolution failure, not a KeyError
+            def broken(*args, **kw):
+                raise UnicodeError('label too long (simulated)')
+            records = []
+            client = RestClient(Endpoint('http', '127.0.0.1', port), symbol='BTCUSDT', recorder=records.append,
+                                min_interval_s=0, max_body_bytes=4096)
+            with mock.patch.object(netconnect, 'socket', stand_in(broken)):
+                with self.assertRaisesRegex(OSError, 'UnicodeError'):
+                    netconnect.connect('127.0.0.1', port, time.perf_counter() + 2.0)
+                status, _, _ = client.server_time(budget_s=1.0)
+            self.assertIsNone(status)
+            self.assertIn('UnicodeError', records[0]['error'])
+            # R2-5: an expired deadline starts no lookup and no worker
+            calls = []
+
+            def counting(*args, **kw):
+                calls.append(args)
+                return addresses[1:]
+            workers = sum(t.name == 'ftdi-resolve' for t in threading.enumerate())
+            with mock.patch.object(netconnect, 'socket', stand_in(counting)):
+                with self.assertRaises(netconnect.SetupTimeout):
+                    netconnect.connect('127.0.0.1', port, time.perf_counter() - 1.0)
+            self.assertEqual(calls, [])
+            self.assertEqual(sum(t.name == 'ftdi-resolve' for t in threading.enumerate()), workers)
+
 
 if __name__ == '__main__':
     unittest.main()

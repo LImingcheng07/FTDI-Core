@@ -55,7 +55,8 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
   ρ = 100 ppm. An estimate older than `max_age` is stale.
 - **Assumption, always stated**: the venue's server-time clock and its event-time clock are coherent. This is
   not verifiable from outside and is listed in every report.
-- **Latency estimate** for an event: `L = (read_wall − θ) − venue_event_ms`, reported with `±u(t)`.
+- **Latency estimate** for an event: `L = (read_wall + θ) − venue_event_ms` (θ is venue minus local, so
+  `read_wall + θ` is the read time on the venue clock), reported with `±u(t)`.
 - **Wall clock against the interval clock** (since v0.4.1). The *level* of a stamp pair is wall minus interval
   time. When the clock sample carries interval stamps (live capture records them), each read is checked against
   the sample that corrects it: `Δ = |level(read) − level(sample)|`. `Δ` above the tolerance (5 ms) plus
@@ -70,9 +71,9 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
 | `OFFSET_STALE` | estimate older than `max_age` | excluded from percentiles |
 | `OFFSET_UNCERTAIN` | `u(t)` above the policy limit (default 20 ms) | excluded from percentiles |
 | `NEGATIVE_BEYOND_UNCERTAINTY` | `L < −u(t)` | clock model or timestamp definition is wrong; excluded and counted; many → report INCONCLUSIVE |
-| `WALL_CLOCK_STEP` | sample with interval stamps: `Δ` above tolerance + `ρ·age` and the read agrees with its neighbours (the clock moved between sample and read). Sample without them (heuristic): the read's level departs from the median of the preceding 20 accepted reads by more than tolerance + `ρ`·elapsed, and so does the median of this and the next 20 reads (a lasting shift) | sample with interval stamps: that read is excluded; heuristic: every read from that point is excluded |
-| `READ_STAMP_OUTLIER` | (since v0.4.1) the read's level departs from its neighbouring reads without a lasting shift (jitter, a short run of quantised stamps, a deviating first or last read); with interval stamps on the sample only if `Δ` is above the limit as well | that read alone is excluded; it is never a reference for later reads |
-| `QUEUED_READ` | `queue_depth_at_read > 0`, or the read followed the previous one faster than the interval-clock resolution | read time ≠ arrival time; excluded from latency, kept for throughput |
+| `WALL_CLOCK_STEP` | sample with interval stamps: `Δ` above tolerance + `ρ·age` and the read agrees with its neighbours (the clock moved between sample and read). Sample without them (heuristic): the reference starts with the first two consecutive reads that agree (levels within tolerance + `ρ`·elapsed); a read departs when it disagrees with the majority of the preceding 20 accepted reads; a lasting shift when the majority of this and the next 20 reads depart as well | sample with interval stamps: that read is excluded; heuristic: every read from that point is excluded |
+| `READ_STAMP_OUTLIER` | (since v0.4.1) the read departs without a lasting shift (jitter, a short run of quantised stamps, a deviating last read), or comes before the first agreeing pair; with interval stamps on the sample only if `Δ` is above the limit as well | that read alone is excluded; it is never a reference for later reads |
+| `QUEUED_READ` | `queue_depth_at_read > 0` (the reader found earlier messages still waiting) | read time ≠ arrival time; excluded from latency, kept for throughput |
 | `LOW_RESOLUTION_CLOCK` | interval clock resolution above the limit | no interval metrics |
 
 ## 5. Percentile reporting rules
@@ -92,8 +93,12 @@ samples, the clock implementations, and the coherence assumption. If more than 1
   and the read-only pilot analysis (pure functions, stdlib only, no network).
 - CLI `analyze-clock-evidence --pilot-db PATH [--report R.json]` (opens the DB `mode=ro&immutable=1`).
 - Deterministic tests in `tests/test_timeprov.py`.
+- Since v0.4.0 the live adapter (Task 004, `docs/LIVE_CAPTURE.md`): reader thread with `perf_counter_ns`, wall
+  stamp and queue depth per read; server-time samples with wall and interval stamps; `analyze-clock-evidence
+  --session` (`ftdi_core/live/latency.py`). Since v0.4.1 the precise Windows wall clock and the per-read check
+  against the sample (§4); regressions in `tests/test_live_pilot_findings.py`.
 
-## 7. Next steps (not done)
+## 7. Next steps (as written for v0.3; items 1 and 2 are done by the live adapter, see §6)
 
 1. A live adapter must implement §3: decoupled reader thread with `perf_counter_ns`, queue depth, raw-frame
    journal commit timestamps.

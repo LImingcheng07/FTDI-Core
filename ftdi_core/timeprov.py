@@ -196,50 +196,45 @@ def classify_events(events, estimate, policy=TimePolicy()):
 
 
 STEP_CONFIRM = 20   # a wall-clock step must dominate this many following reads (jitter and short runs revert)
-MIN_REFERENCE = 2   # preceding reads needed before a read's level is judged against them
 
 
 def _stamp_levels(events, policy):
     """(index of the first lasting wall-clock shift or None, indices of outlying reads), from the reads alone.
 
-    The level of a read is its wall stamp minus its interval stamp. Levels are compared with the allowed drift
-    (``policy.drift_ppm``) over the time between them added to the tolerance, so slow drift is not a shift. A read
-    *deviates* when its level departs from the median of the preceding STEP_CONFIRM accepted reads (outliers are
-    never a reference); it starts a lasting shift when the median of this and the next STEP_CONFIRM reads (at
-    least two) departs as well, otherwise it is an outlier (jitter; a short run of quantised stamps as in the
-    2026-11-08 pilot). While fewer than MIN_REFERENCE reads are accepted, a read is an outlier if it departs from
-    the following MIN_REFERENCE reads and from the accepted reads before it (if any): a deviating first read is
-    excluded instead of becoming the reference that makes every later read look shifted, and two consistent reads
-    before a lasting shift remain its reference."""
+    The level of a read is its wall stamp minus its interval stamp. Two reads *agree* when their levels differ by
+    at most the tolerance plus the allowed drift (``policy.drift_ppm``) over the time between them, so slow drift
+    is never a shift. The reference starts with the first two consecutive reads that agree; reads before them are
+    outliers (a deviating first read must not become the reference). A read *departs* when it disagrees with the
+    majority of the last STEP_CONFIRM accepted reads (outliers are never a reference). A departing read starts a
+    lasting shift when the majority of this and the next STEP_CONFIRM reads depart as well (at least two reads),
+    otherwise it is an outlier: jitter, a short run of quantised stamps as in the 2026-11-08 pilot, a deviating last
+    read. The rule does not depend on the direction of a shift."""
     tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
     points = [(i, e.read_perf_ns, e.read_wall_ns - e.read_perf_ns) for i, e in enumerate(events)
               if e.read_perf_ns is not None]
 
-    def departs(level, at, window):
-        reference = statistics.median_low([v for _, _, v in window])
-        centre = statistics.median_low([t for _, t, _ in window])
-        return abs(level - reference) > tolerance_ns + rate * abs(at - centre)
+    def agree(a, b):
+        return abs(a[2] - b[2]) <= tolerance_ns + rate * abs(a[1] - b[1])
+
+    def departs(point, window):
+        return 2 * sum(not agree(point, member) for member in window) > len(window)
 
     outliers, accepted = set(), []
     for k, point in enumerate(points):
-        index, at, level = point
-        before = accepted[-STEP_CONFIRM:]
-        if len(before) < MIN_REFERENCE:
-            following = points[k + 1:k + 1 + MIN_REFERENCE]
-            if len(following) == MIN_REFERENCE and departs(level, at, following) \
-                    and (not before or departs(level, at, before)):
-                outliers.add(index)
-            else:
+        if not accepted:
+            if k + 1 < len(points) and agree(point, points[k + 1]):
                 accepted.append(point)
+            elif k > 0 or k + 1 < len(points):   # a lone read has nothing to disagree with
+                outliers.add(point[0])
             continue
-        if not departs(level, at, before):
+        before = accepted[-STEP_CONFIRM:]
+        if not departs(point, before):
             accepted.append(point)
             continue
         after = points[k:k + STEP_CONFIRM + 1]
-        if len(after) >= 2 and departs(statistics.median_low([v for _, _, v in after]),
-                                       statistics.median_low([t for _, t, _ in after]), before):
-            return index, outliers
-        outliers.add(index)
+        if len(after) >= 2 and 2 * sum(departs(member, before) for member in after) > len(after):
+            return point[0], outliers
+        outliers.add(point[0])
     return None, outliers
 
 

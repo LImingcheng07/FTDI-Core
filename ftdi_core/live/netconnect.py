@@ -25,7 +25,9 @@ def remaining(deadline):
 
 
 def resolve(host, port, deadline):
-    """``getaddrinfo`` for a TCP connection, abandoned (SetupTimeout) when the deadline passes first."""
+    """``getaddrinfo`` for a TCP connection, abandoned (SetupTimeout) when the deadline passes first. Any failure
+    of the lookup is raised in the caller as OSError (a name that cannot be encoded is a resolution failure)."""
+    remaining(deadline)   # no worker for a deadline that has already passed
     outcome = {}
 
     def work():
@@ -33,6 +35,8 @@ def resolve(host, port, deadline):
             outcome['addresses'] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
         except OSError as exc:
             outcome['error'] = exc
+        except Exception as exc:  # e.g. UnicodeError from IDNA encoding
+            outcome['error'] = OSError(f'name resolution of {host!r} failed: {type(exc).__name__}: {exc}')
     worker = threading.Thread(target=work, name='ftdi-resolve', daemon=True)
     worker.start()
     worker.join(remaining(deadline))
@@ -47,14 +51,16 @@ def connect(host, port, deadline):
     """A connected TCP socket (timeout set to the remaining time), or OSError / SetupTimeout."""
     last = None
     for family, kind, proto, _, address in resolve(host, port, deadline):
-        sock = socket.socket(family, kind, proto)
+        sock = None
         try:
+            sock = socket.socket(family, kind, proto)   # may fail for a family the local stack lacks: next address
             sock.settimeout(remaining(deadline))
             sock.connect(address)
             sock.settimeout(remaining(deadline))
             return sock
         except BaseException as exc:
-            sock.close()
+            if sock is not None:
+                sock.close()
             if isinstance(exc, SetupTimeout) or not isinstance(exc, OSError):
                 raise
             last = exc

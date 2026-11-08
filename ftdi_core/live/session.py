@@ -105,8 +105,11 @@ def previous_link(previous_dir):
 
 # -- raw evidence (shared by sealing, verification and recovery) ----------------------------------
 
+MAX_INT64 = 2 ** 63 - 1   # clocks, trade ids and SQLite integers are 64-bit; larger values are not evidence
+
+
 def _is_int(value, *, nullable=False):
-    return (value is None and nullable) or (type(value) is int and value >= 0)
+    return (value is None and nullable) or (type(value) is int and 0 <= value <= MAX_INT64)
 
 
 def split_lines(data):

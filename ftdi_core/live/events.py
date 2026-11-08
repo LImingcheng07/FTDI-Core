@@ -47,7 +47,7 @@ def loads(text):
 
 
 def _nonneg_int(value):
-    return type(value) is int and value >= 0
+    return type(value) is int and 0 <= value <= 2 ** 63 - 1   # 64-bit, as venue ids/times and SQLite integers
 
 
 def _positive_decimal(value):
