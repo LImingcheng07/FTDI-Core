@@ -619,6 +619,19 @@ class PilotFindingTests(unittest.TestCase):
         self.assertLess(evidence.uncertainty_ms, 7.0)
         only_old = classify_events([read], nearest_estimator([old], policy, 0.0001))[0]
         self.assertIn('OFFSET_UNCERTAIN', only_old.tags)
+        # a sample under the read's wall clock is preferred to one whose total would be smaller but whose wall
+        # clock differs by more than the tolerance (6 ms): the read is corrected, not tagged
+        def leveled(at_perf, rtt_ms, level_ms):
+            wall = BASE + at_perf + int(level_ms * MS)
+            half = int(rtt_ms * MS) // 2
+            return OffsetSample(wall - half, (wall - int(level_ms * MS)) // MS, wall + half, at_perf - half,
+                                at_perf + half)
+        precise_other = leveled(read_perf - 500 * MS, 2.0, 0)     # u about 2 + 6 ms moved
+        slower_same = leveled(read_perf - 500 * MS, 16.0, 6)      # u about 9 ms, same wall clock
+        shifted = EventTimes(read.venue_event_ms, read.read_wall_ns + 6 * MS, read.read_perf_ns, 0)
+        evidence = classify_events([shifted], nearest_estimator([precise_other, slower_same], policy, 0.0001))[0]
+        self.assertTrue(evidence.trusted, evidence.tags)
+        self.assertAlmostEqual(evidence.latency_ms, 40.0, delta=1.5)
 
 
 if __name__ == '__main__':
