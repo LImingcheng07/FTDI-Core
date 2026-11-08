@@ -11,8 +11,9 @@ from pathlib import Path
 from .. import __version__
 from .endpoints import resolve
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
-from .rest import RateLimited, RestClient
-from .session import START, START_SCHEMA, SessionFiles, create_session_dir, previous_link, utc_iso, write_new_json
+from .rest import RateLimited, RestClient, UnusableBody
+from .session import (START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
+                      parse_raw, previous_link, raw_rest_record, raw_ws_record, utc_iso, write_new_json)
 from .wsclient import ConnectionClosed, WebSocket, WebSocketError
 
 
@@ -48,8 +49,9 @@ class _Stop(Exception):
         self.reason, self.detail = reason, detail
 
 
-def _reader(ws, items, overflow, stop, conn):
-    """Read messages; stamp them immediately after the read; never drop one."""
+def _reader(ws, items, overflow, stop, conn, spill):
+    """Read messages; stamp them immediately after the read; never drop one (a message that does not fit into
+    the full queue is kept in ``spill`` and the reader stops)."""
     while not stop.is_set():
         try:
             text = ws.recv()
@@ -65,6 +67,7 @@ def _reader(ws, items, overflow, stop, conn):
             try:
                 items.put_nowait(('msg', conn, text, wall, perf, depth))
             except queue.Full:
+                spill.append(('msg', conn, text, wall, perf, depth))
                 overflow.set()
                 return
             continue
@@ -88,7 +91,6 @@ class _Capture:
                                      'gaps_repaired'), 0)
         self.written = {}
         self.offsets = {}
-        self.conflict_seq = None
         self.pending = {}
         self.first_seq = self.expected = None
         if self.previous_link:
@@ -97,22 +99,37 @@ class _Capture:
         self.gap_pages = 0
         self.catch_up = None
         self.ws_n = self.rest_n = 0
+        self.interpreted = {'raw_ws': 0, 'raw_rest': 0}   # prefix of raw lines interpreted before the stop
         self.unsynced = 0
         self.last_clock = None
+        self.deadline = None
 
     # -- recording -------------------------------------------------------------------------------
     def _record_rest(self, record):
         self.files.append('raw_rest.jsonl', {'n': self.rest_n, **record})
         self.rest_n += 1
 
-    def _clock_sample(self):
+    def _interpreted(self, name, n):
+        if self.interpreted[name] == n:
+            self.interpreted[name] = n + 1
+
+    def _budget(self):
+        return max(0.05, self.deadline - time.perf_counter())
+
+    def _clock_sample(self, budget_s=None):
+        """A server-time sample; any failure except a rate limit is recorded and ignored."""
         self.last_clock = time.perf_counter()
-        status, body, stamps = self.rest.server_time()
+        n = self.rest_n
+        try:
+            status, body, stamps = self.rest.server_time(self._budget() if budget_s is None else budget_s)
+        except UnusableBody:
+            return
+        self._interpreted('raw_rest', n)
         if status != 200 or body is None:
             return
         try:
             obj = loads(body)
-            venue_ms = obj['serverTime'] if isinstance(obj, dict) else None
+            venue_ms = obj.get('serverTime') if isinstance(obj, dict) else None
         except FormatError:
             return
         if type(venue_ms) is int and venue_ms >= 0 and stamps['t1_wall_ns'] >= stamps['t0_wall_ns']:
@@ -137,7 +154,6 @@ class _Capture:
     def _same(self, kept, event, origin):
         verdict = compare(kept, event)
         if verdict == 'conflict':
-            self.conflict_seq = event['source_seq']
             raise _Stop('HALTED_CONFLICT', f'seq {event["source_seq"]} delivered with different content ({origin})')
         if verdict == 'text_variant':
             self.counts['text_variants'] += 1
@@ -176,11 +192,18 @@ class _Capture:
     def _rest_page(self, limit):
         """One REST request from ``expected``; processes the records. Returns the number of records."""
         start = self.expected
-        status, body, _ = self.rest.agg_trades(start, limit)
-        self.counts['rest_pages'] += 1
+        n = self.rest_n
+        try:
+            status, body, _ = self.rest.agg_trades(start, limit, self._budget())
+        except UnusableBody as exc:
+            raise _Stop('FORMAT_ERROR', f'REST aggTrades body unusable: {exc}') from None
+        finally:
+            self.counts['rest_pages'] += 1
         if status != 200 or body is None:
+            self._interpreted('raw_rest', n)
             return 0
         page = parse_rest_page(body)
+        self._interpreted('raw_rest', n)
         for offset, record in enumerate(page):
             if record['a'] != start + offset:
                 raise _Stop('FORMAT_ERROR', f'REST page from {start} is not consecutive at position {offset}')
@@ -219,7 +242,7 @@ class _Capture:
     def _connect(self, attempt):
         path = f'/ws/{self.symbol.lower()}@aggTrade'
         return WebSocket.connect(self.endpoints.ws, path, timeout=self.limits.ws_read_timeout_s,
-                                 max_message=self.limits.max_message_bytes)
+                                 max_message=self.limits.max_message_bytes, deadline=self.deadline)
 
     def _backoff(self, k, deadline):
         delay = min(8.0, 0.5 * 2 ** k) * random.uniform(0.9, 1.1)
@@ -256,7 +279,45 @@ class _Capture:
                 record = parse_ws(text, self.symbol)
             except FormatError as exc:
                 raise _Stop('FORMAT_ERROR', str(exc)) from None
+            self._interpreted('raw_ws', self.ws_n - 1)
             self._accept(record, 'ws')
+
+    def _drain(self, items, spill):
+        """Record every WebSocket message already received but not interpreted (evidence after the stop)."""
+        pending = []
+        while items is not None:
+            try:
+                pending.append(items.get_nowait())
+            except queue.Empty:
+                break
+        pending.extend(spill)
+        spill.clear()
+        for item in pending:
+            if item[0] != 'msg':
+                continue
+            _, conn, text, wall, perf, depth = item
+            self.files.append('raw_ws.jsonl', {'conn': conn, 'n': self.ws_n, 'read_wall_ns': wall,
+                                               'read_perf_ns': perf, 'queue_depth': depth, 'text': text})
+            self.ws_n += 1
+            self.counts['ws_messages'] += 1
+
+    def _conflict_cut(self):
+        """Cut our unsealed events back before the smallest written seq that any raw record contradicts
+        (the same lenient evidence rule as verify_session). Returns that seq or None."""
+        ws = parse_raw('raw_ws.jsonl', self.files.read('raw_ws.jsonl'), raw_ws_record)
+        rest = parse_raw('raw_rest.jsonl', self.files.read('raw_rest.jsonl'), raw_rest_record)
+        evidence, _ = evidence_index(ws, rest, self.symbol, self.interpreted, lambda code, detail=None: None)
+        cut = first_conflict(self.written, evidence)
+        if cut is None:
+            return None
+        handle = self.files.handles['events.jsonl']
+        handle.flush()
+        handle.truncate(self.offsets[cut])
+        handle.seek(0, 2)
+        for seq in [s for s in self.written if s >= cut]:
+            del self.written[seq]
+        self.files.lines['events.jsonl'] = len(self.written)
+        return cut
 
     def run(self):
         try:
@@ -267,10 +328,11 @@ class _Capture:
 
     def _run(self):
         started = time.perf_counter()
-        deadline = started + self.max_seconds
+        deadline = self.deadline = started + self.max_seconds
         stop_reason, detail = None, ''
         ws = reader = None
         stop_reader = threading.Event()
+        items, spill = None, []
         try:
             self._clock_sample()
             attempt = 0
@@ -294,7 +356,7 @@ class _Capture:
                 items, overflow = queue.Queue(maxsize=self.limits.queue_size), threading.Event()
                 stop_reader = threading.Event()
                 reader = threading.Thread(target=_reader, args=(ws, items, overflow, stop_reader,
-                                                                self.counts['connections']), daemon=True)
+                                                                self.counts['connections'], spill), daemon=True)
                 reader.start()
                 reason = self._consume(ws, items, overflow, deadline)
                 stop_reader.set()
@@ -320,21 +382,18 @@ class _Capture:
                 ws.close()
             if reader is not None:
                 reader.join(10)
+        self._drain(items, spill)
         if stop_reason != 'RATE_LIMITED':
             try:
-                self._clock_sample()
-            except RateLimited:
-                pass
-        if self.conflict_seq is not None and self.conflict_seq in self.offsets:
-            # The venue delivered two contents for an already written seq: that seq and everything after it are
-            # ambiguous. Our own unsealed file is cut back before it (the raw evidence keeps both deliveries).
-            handle = self.files.handles['events.jsonl']
-            handle.flush()
-            handle.truncate(self.offsets[self.conflict_seq])
-            handle.seek(0, 2)
-            for seq in [s for s in self.written if s >= self.conflict_seq]:
-                del self.written[seq]
-            self.files.lines['events.jsonl'] = len(self.written)
+                self._clock_sample(budget_s=2.0)
+            except RateLimited as exc:
+                if stop_reason in ('MAX_EVENTS', 'MAX_SECONDS', 'INTERRUPTED'):
+                    detail = f'final clock sample after {stop_reason}: {exc}'
+                    stop_reason = 'RATE_LIMITED'
+        cut = self._conflict_cut()
+        if cut is not None:
+            stop_reason, detail = 'HALTED_CONFLICT', (f'raw evidence contradicts written seq {cut}; events cut '
+                                                      f'back before it (stop was {stop_reason}: {detail})')
         events = sorted(self.written)
         manifest = self.files.seal({
             'symbol': self.symbol, 'lane': lane(self.symbol), 'started_utc': self.started_utc, 'sealed_by': 'capture',
@@ -343,7 +402,8 @@ class _Capture:
             'chain': 'CONTIGUOUS' if self.previous_link else 'FIRST', 'stop_reason': stop_reason,
             'stop_detail': detail,
             'counts': self.counts, 'endpoints': {'ws': self.endpoints.ws.base, 'rest': self.endpoints.rest.base},
-            'public_network': self.endpoints.public, 'limits': asdict(self.limits)})
+            'public_network': self.endpoints.public, 'limits': asdict(self.limits),
+            'interpreted': dict(self.interpreted)})
         return {**manifest, 'session_dir': str(self.dir)}
 
 

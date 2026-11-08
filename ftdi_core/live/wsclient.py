@@ -12,9 +12,11 @@ import socket
 import ssl
 import struct
 import threading
+import time
 
 GUID = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 MAX_HANDSHAKE = 16384
+MAX_FRAGMENTS = 1024
 
 
 class WebSocketError(Exception):
@@ -34,29 +36,44 @@ class WebSocket:
         self._closing = False
 
     @classmethod
-    def connect(cls, endpoint, path, *, timeout, max_message):
+    def connect(cls, endpoint, path, *, timeout, max_message, deadline=None):
+        """Connect and complete the handshake within ``timeout`` seconds overall (and before the absolute
+        ``time.perf_counter()`` ``deadline`` if given); afterwards each read times out after ``timeout``."""
+        end = time.perf_counter() + timeout
+        if deadline is not None:
+            end = min(end, deadline)
+
+        def remaining():
+            left = end - time.perf_counter()
+            if left <= 0:
+                raise ConnectionClosed('handshake did not complete in time')
+            return left
         try:
-            raw = socket.create_connection((endpoint.host, endpoint.port), timeout=timeout)
+            raw = socket.create_connection((endpoint.host, endpoint.port), timeout=remaining())
         except OSError as exc:
             raise ConnectionClosed(f'connect failed: {exc}') from None
         sock = raw
         try:
             if endpoint.scheme == 'wss':
+                raw.settimeout(remaining())
                 sock = ssl.create_default_context().wrap_socket(raw, server_hostname=endpoint.host)
             key = base64.b64encode(os.urandom(16))
             host = endpoint.host if endpoint.port in (80, 443) else f'{endpoint.host}:{endpoint.port}'
             request = (f'GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
                        f'Sec-WebSocket-Key: {key.decode()}\r\nSec-WebSocket-Version: 13\r\n'
                        'User-Agent: FTDI-Core-readonly\r\n\r\n').encode()
+            sock.settimeout(remaining())
             sock.sendall(request)
             response = b''
             while b'\r\n\r\n' not in response:
+                sock.settimeout(remaining())
                 chunk = sock.recv(4096)
                 if not chunk:
                     raise ConnectionClosed('connection closed during the handshake')
                 response += chunk
                 if len(response) > MAX_HANDSHAKE:
                     raise WebSocketError('handshake response too large')
+            sock.settimeout(timeout)
             head, _, rest = response.partition(b'\r\n\r\n')
             lines = head.decode('latin-1').split('\r\n')
             if not lines[0].startswith('HTTP/1.1 101'):
@@ -142,6 +159,8 @@ class WebSocket:
             else:
                 raise WebSocketError(f'unknown opcode {opcode}')
             parts.append(payload)
+            if len(parts) > MAX_FRAGMENTS:
+                raise WebSocketError(f'message split into more than {MAX_FRAGMENTS} frames')
             size += len(payload)
             if size > self._max_message:
                 raise WebSocketError(f'message exceeds {self._max_message} bytes')

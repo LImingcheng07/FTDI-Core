@@ -46,13 +46,16 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
 * A reader thread receives WebSocket messages and, immediately after each read, records `read_wall_ns`
   (`time.time_ns()`), `read_perf_ns` (`time.perf_counter_ns()`) and `queue_depth` (messages already waiting in
   the bounded queue) and enqueues the message. A full queue stops the capture (`READER_OVERFLOW`); messages are
-  never dropped. The writer (calling thread) does all validation and persistence.
+  never dropped (the one that did not fit is kept). The writer (calling thread) does all validation and
+  persistence. When the capture stops, every message already received but not yet interpreted (still queued, or
+  kept on overflow) is appended to `raw_ws` as evidence after the stop.
 * Every WebSocket text message is appended to `raw_ws` **before** it is interpreted; every REST response (any
   status) to `raw_rest` before it is interpreted.
 * `expected` = next `source_seq` to write. Without `previous_session` the first valid record seen (WS or REST)
   anchors the session (`first_seq`). With `previous_session` (a sealed, verified, **non-empty** session of the
   same symbol; otherwise `ValueError` before any socket) `expected = previous.last_seq + 1` from the start, that is
-  `first_seq`, and one REST catch-up request `fromId=expected` is made at the start.
+  `first_seq`, and one REST catch-up request `fromId=expected` is made `gap_wait_ms` after the WebSocket is
+  connected, unless WebSocket records advanced `expected` or opened a gap meanwhile.
 * Record with `a < first_seq` (only possible with an anchor): counted `before_anchor`, compared with nothing,
   not written. `first_seq <= a < expected`: must be identical to the written event (duplicate) else conflict.
   `a == expected`: written; then buffered records continue the sequence. `a > expected`: buffered (at most
@@ -67,19 +70,30 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   `GAP_BLOCKED`.
 * Connection loss (close frame, EOF, socket error, read timeout `limits.ws_read_timeout_s`): reconnect after
   `min(8, 0.5·2^k)` s ± 10 % jitter, at most `limits.max_reconnects` times (`CONNECTION_FAILED` after that); the
-  resulting gap is repaired by the rule above; after every reconnect one REST catch-up request `fromId=expected`
-  is made (an empty answer just means nothing new). Each connection has an id (`conn`, from 1).
-* Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end; failures are
-  recorded and do not stop the capture.
-* HTTP 429 or 418 on any REST call → `RATE_LIMITED` (the `Retry-After` value is recorded, nothing is retried).
-  Other HTTP errors on aggTrades: retried like an empty page.
+  resulting gap is repaired by the rule above; after every reconnect one deferred REST catch-up request
+  `fromId=expected` is made by the same rule as at the start (an empty answer just means nothing new). Each
+  connection has an id (`conn`, from 1). A message split into more than 1024 frames → `FORMAT_ERROR`.
+* Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end (budget 2 s);
+  failures (transport errors, non-200, a body without an integer `serverTime`) are recorded and do not stop the
+  capture.
+* Deadlines: every WebSocket handshake completes within `ws_read_timeout_s` and before the capture deadline;
+  every REST call (connect, headers, body) completes within 8 s and before the capture deadline, else it is
+  aborted and recorded as a transport error. A capture therefore ends at most a few seconds after
+  `max_seconds` (the final clock sample has its own 2 s budget).
+* HTTP 429 or 418 on any REST call, including the final clock sample → `RATE_LIMITED` (the `Retry-After` value is
+  recorded in `error`, nothing is retried). Other HTTP errors on aggTrades: retried like an empty page. A 200
+  aggTrades response whose body is larger than `max_rest_body_bytes` or not UTF-8 → `FORMAT_ERROR` (the received
+  bytes are kept, base64, in `body_base64`).
 * Stop reasons: `MAX_EVENTS` (exactly `max_events` written), `MAX_SECONDS`, `INTERRUPTED`
   (KeyboardInterrupt), `GAP_BLOCKED`, `HALTED_CONFLICT`, `FORMAT_ERROR` (invalid WS message, invalid REST body or
   page, binary or oversized message), `READER_OVERFLOW`, `PENDING_OVERFLOW`, `RATE_LIMITED`,
   `CONNECTION_FAILED`. Every stop seals the session with the contiguous events written so far (possibly none).
-  Nothing past a gap or a conflict is ever written to `events.jsonl`. A conflict for an **already written** seq
-  makes that seq ambiguous: at sealing, `events.jsonl` is cut back to the events **before** it (the raw files keep
-  both deliveries), so `last_seq = conflicting seq − 1`.
+  Nothing past a gap or a conflict is ever written to `events.jsonl`.
+* **Conflict cut at sealing**: before sealing, all raw evidence of the session is scanned with the rule of §5
+  (every well-formed record counts, also inside a malformed page and after the stop). If any raw record
+  contradicts a written event, that seq is ambiguous: `events.jsonl` is cut back to the events **before** the
+  smallest such seq (the raw files keep both deliveries) and the stop reason becomes `HALTED_CONFLICT`. A sealed
+  session can therefore never show `RAW_CONFLICT`.
 
 `CaptureLimits` (frozen dataclass, all fields keyword, validated): `queue_size=10000`, `max_pending=100000`,
 `gap_wait_ms=200`, `gap_timeout_s=10.0`, `max_rest_pages_per_gap=10`, `rest_min_interval_s=0.35`
@@ -96,7 +110,7 @@ exists). While capturing, files carry the suffix `.part`; sealing renames them. 
 |---|---|---|
 | `events.jsonl` | Core event, ascending contiguous `source_seq` | §2 |
 | `raw_ws.jsonl` | WebSocket text message as received | `conn`, `n` (0-based, session-wide), `read_wall_ns`, `read_perf_ns`, `queue_depth`, `text` |
-| `raw_rest.jsonl` | REST response | `n`, `kind` (`aggTrades`/`time`), `url`, `status`, `t0_wall_ns`, `t0_perf_ns`, `t1_wall_ns`, `t1_perf_ns`, `body` (text, or `null` on transport error), `error` (string or `null`) |
+| `raw_rest.jsonl` | REST response | `n`, `kind` (`aggTrades`/`time`), `url`, `status`, `t0_wall_ns`, `t0_perf_ns`, `t1_wall_ns`, `t1_perf_ns`, `body` (text, or `null` on transport error or unusable body), `body_base64` (received bytes when the body is too large or not UTF-8, else `null`), `error` (string or `null`) |
 | `clock.jsonl` | successful time sample | `t0_wall_ns`, `t0_perf_ns`, `venue_ms`, `t1_wall_ns`, `t1_perf_ns` |
 | `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest) |
 | `SESSION_MANIFEST.json` | — | below; written last, atomically |
@@ -110,7 +124,9 @@ manifest_sha256}`), `chain` (`FIRST` without previous, `CONTIGUOUS` when `first_
 the session is empty), `stop_reason`, `stop_detail` (human-readable cause, may be empty), `files` (`{name: {bytes, sha256, lines}}` for the four data files),
 `counts` (`ws_messages`, `ws_duplicates`, `rest_pages`, `rest_records`, `rest_duplicates`, `text_variants`,
 `before_anchor`, `connections`, `reconnects`, `clock_samples`, `gaps_repaired`), `endpoints` (`ws`, `rest`),
-`public_network`, `limits`, `capture_start_sha256`, and for recovery `recovered_from`
+`public_network`, `limits`, `capture_start_sha256`, `interpreted` (`{raw_ws: k, raw_rest: j}`: the first `k`
+resp. `j` raw lines were interpreted by the capture; later lines are evidence received after the stop), and for
+recovery `recovered_from`
 (`{name.part: {bytes, sha256}}`; counts that cannot be derived from the files are `null`).
 
 The return value of `capture_session` is the manifest plus `session_dir`.
@@ -123,27 +139,32 @@ The return value of `capture_session` is the manifest plus `session_dir`.
 | Code | Condition |
 |---|---|
 | `UNSEALED` | no manifest (status `INVALID`) |
-| `MANIFEST_INVALID` | manifest unreadable, wrong schema or inconsistent fields |
-| `FILE_MISSING` / `FILE_MISMATCH` | a data file absent, or bytes / SHA-256 / line count differ from the manifest |
+| `MANIFEST_INVALID` | manifest unreadable, wrong schema, wrong field types, inconsistent fields, or `CAPTURE_START.json` describing another capture (symbol, lane, previous; for a capture-sealed session also endpoints, limits, start time) |
+| `FILE_MISSING` / `FILE_MISMATCH` | a data file, `CAPTURE_START.json` or a recorded `.part` file absent, or bytes / SHA-256 / line count differ from the manifest; after recovery a raw file that is not the complete lines of its `.part`, `events.jsonl` not a prefix of it, or a `.part` file not recorded |
 | `EVENT_INVALID` | an events line is not a canonical Core event of §2 for this symbol |
 | `EVENT_SEQUENCE_GAP` | `source_seq` not contiguous `first_seq..last_seq`, or count ≠ `event_count` |
 | `EVENT_WITHOUT_RAW_EVIDENCE` | no `raw_ws` message or `raw_rest` aggTrades record with that `a` that is identical (§2) |
-| `RAW_CONFLICT` | a raw record with `a` in `[first_seq, last_seq]` not identical to the event |
-| `RAW_UNPARSEABLE` | a raw line is not valid JSON of the documented shape |
+| `RAW_CONFLICT` | a raw record (any well-formed record, also inside a malformed page or after the stop) with `a` in `[first_seq, last_seq]` not identical to the event |
+| `RAW_UNPARSEABLE` | a raw line is not valid JSON of the documented shape, `n` is not consecutive, or an **interpreted** message/page is not a valid aggTrade record |
 | `CHAIN_MISMATCH` | `chain` incoherent with the recorded `previous` (`FIRST` with a previous, `CONTIGUOUS` without, `first_seq ≠ previous.last_seq + 1`); with `previous`: it is not `VERIFIED`, or its manifest SHA-256 / id / last_seq differ from the recorded link |
 
 Notices (counted, do not change the status): `LEFTOVER_PART_FILE` (a `.part` file kept after recovery),
-`RAW_STOP_MESSAGE` (the last raw message or page is not a valid aggTrade record and the session stopped with
-`FORMAT_ERROR` or was recovered: it caused the stop and is kept as evidence).
+`RAW_AFTER_STOP` (a raw message or page after the interpreted prefix that is not a valid aggTrade record: it caused
+the stop or arrived after it, and is kept as evidence; its well-formed records still count for `RAW_CONFLICT`).
+Verification never raises on file content; it only raises `FileNotFoundError` for a missing directory.
 
 ## 6. Recovery of an unsealed session
 
 `seal_session(session_dir, *, apply=False) -> dict`: for a directory with `.part` files and no manifest (a killed
 capture). Dry run (default) changes nothing and reports `would_seal` (`first_seq`, `last_seq`, `event_count`).
 Apply writes the final files with the **complete lines** only: `events.jsonl` = the longest prefix of complete,
-valid, contiguous events that are supported by raw evidence; the raw files = their complete lines. The `.part`
-files are **kept** (never deleted) and listed in `recovered_from`. `stop_reason` = `RECOVERED`. A directory that
-already has a manifest → `ValueError`.
+valid, contiguous events that are supported by raw evidence, cut before any seq that raw evidence contradicts
+(§3); the raw files = their complete lines. The `.part` files are **kept** (never deleted) and listed in
+`recovered_from`. `stop_reason` = `RECOVERED`; `interpreted` = `{raw_ws: 0, raw_rest: 0}` (unknown after a kill).
+A capture killed between the renames of sealing (some data files already final, the others `.part`) is recovered
+the same way. Refused (`ValueError`, nothing written): a manifest already exists; `CAPTURE_START.json` missing or
+inconsistent; a data file both final and `.part`, or neither; a complete raw line that is malformed or whose `n`
+is not consecutive.
 
 ## 7. CLI
 

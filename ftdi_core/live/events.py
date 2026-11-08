@@ -93,15 +93,39 @@ def parse_ws(text, symbol):
 
 def parse_rest_page(body):
     """A REST aggTrades body -> list of venue records (no ordering check here)."""
-    obj = loads(body)
-    if not isinstance(obj, list):
-        raise FormatError('REST aggTrades body is not a JSON array')
-    records = []
-    for index, item in enumerate(obj):
-        if not isinstance(item, dict):
-            raise FormatError(f'REST record {index} is not an object')
-        records.append(_trade_fields(item, f'REST record {index}'))
+    records, problem = rest_records_lenient(body)
+    if problem:
+        raise FormatError(problem)
     return records
+
+
+def rest_records_lenient(body):
+    """(valid records, problem or None): every well-formed record of a body, even if others are malformed.
+
+    Used for evidence: a malformed page must not hide a valid record that contradicts a written event."""
+    try:
+        obj = loads(body)
+    except FormatError as exc:
+        return [], str(exc)
+    if not isinstance(obj, list):
+        return [], 'REST aggTrades body is not a JSON array'
+    records, problem = [], None
+    for index, item in enumerate(obj):
+        try:
+            if not isinstance(item, dict):
+                raise FormatError(f'REST record {index} is not an object')
+            records.append(_trade_fields(item, f'REST record {index}'))
+        except FormatError as exc:
+            problem = problem or str(exc)
+    return records, problem
+
+
+def ws_record_lenient(text, symbol):
+    """The venue record of a WebSocket message, or None if it is not a valid aggTrade of ``symbol``."""
+    try:
+        return parse_ws(text, symbol)
+    except FormatError:
+        return None
 
 
 def core_event(record, symbol):
