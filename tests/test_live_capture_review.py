@@ -146,7 +146,10 @@ class LiveReviewRegressions(unittest.TestCase):
                 result, path = self.capture(venue.ws_url, venue.rest_url, limits={'queue_size': 2})
         self.assertEqual(result['stop_reason'], 'READER_OVERFLOW')
         raw = lines(path / 'raw_ws.jsonl')
-        self.assertGreaterEqual(len(raw), result['interpreted']['raw_ws'] + 3)   # 2 queued + 1 spilled
+        # at least the spilled message is evidence after the stop; how many were still queued depends on scheduling
+        self.assertGreaterEqual(len(raw), result['interpreted']['raw_ws'] + 1)
+        # the venue sends 1, 2, 3, ... and the reader reads in order: consecutive ids prove that no received
+        # message was dropped (including the one that did not fit into the queue)
         self.assertEqual([json.loads(r['text'])['a'] for r in raw], list(range(1, len(raw) + 1)))
         self.assert_verified(path)
 
@@ -367,7 +370,16 @@ class LiveReviewRegressions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'would not verify'):
             seal_session(target, apply=True)
         self.assertEqual(sorted(p.name for p in target.iterdir()), before)
-        self.assertFalse(any(p.name.endswith('.recovery-check') for p in target.parent.iterdir()))
+        self.assertFalse(any('.recovery-check' in p.name for p in target.parent.iterdir()))
+
+    def test_o3_an_output_inside_a_session_is_refused(self):
+        from ftdi_core.live.compose import compose_sessions
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        before = sorted(p.name for p in path.iterdir())
+        with self.assertRaisesRegex(ValueError, 'outside every session'):
+            compose_sessions([path], path / 'composed')
+        self.assertEqual(sorted(p.name for p in path.iterdir()), before)
 
     def test_n6_a_failing_chain_manifest_write_leaves_no_output(self):
         from ftdi_core.live import compose as compose_module

@@ -38,18 +38,24 @@ def compose_sessions(sessions, output_dir):
     output = Path(output_dir)
     if output.exists():
         raise ValueError(f'output directory already exists: {output}')
+    resolved = Path(os.path.realpath(output))
+    for session in originals:
+        real = Path(os.path.realpath(session))
+        if resolved == real or real in resolved.parents or resolved in real.parents:
+            raise ValueError('the output directory must be outside every session directory (and not contain one)')
     output.mkdir(parents=True)
     try:
         manifest = _compose(originals, output)
+        shutil.rmtree(output / SNAPSHOTS)
     except BaseException:
         shutil.rmtree(output, ignore_errors=True)   # only the directory this call created; no session file touched
         raise
-    shutil.rmtree(output / SNAPSHOTS)
     return {**manifest, 'output_dir': str(output)}
 
 
 def _compose(originals, output):
     before = [_tree_fingerprint(session) for session in originals]
+    (output / SNAPSHOTS).mkdir()   # exclusive: fails if it exists
     snapshots = []
     for index, session in enumerate(originals):
         target = output / SNAPSHOTS / str(index) / session.name   # the directory name is the session id

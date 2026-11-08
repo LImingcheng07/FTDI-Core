@@ -105,10 +105,9 @@ class LatencyTests(unittest.TestCase):
         self.base = Path(temporary.name)
 
     def test_recent_events_give_trusted_small_latencies(self):
-        now_ms = int(time.time() * 1000)
         script = []
-        for seq in range(1, 31):
-            script += [('trade_with', seq, {'E': now_ms + seq * 20}), ('sleep', 0.02)]
+        for seq in range(1, 31):   # venue time E taken when the message is sent (never ahead of the send)
+            script += [('trade_now', seq), ('sleep', 0.02)]
         with FakeVenue(connections=[script]) as venue:
             result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
                                      max_events=30, max_seconds=10.0, limits=FAST)

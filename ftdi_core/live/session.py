@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import tempfile
 import time
 
 from .. import __version__
@@ -618,12 +619,10 @@ def _write_new(path, data):
 def _verify_on_copy(directory, start_bytes, finals, parts, fields):
     """Build the recovered session in a private sibling directory and run verify_session on it; nothing is
     written into the real session unless that copy is VERIFIED. The copy is removed afterwards."""
-    check_root = directory.parent / f'.{directory.name}.recovery-check'
-    if check_root.exists():
-        raise ValueError(f'{check_root.name} exists (an earlier recovery check?); remove it and retry')
-    copy = check_root / directory.name
-    copy.mkdir(parents=True)
-    try:
+    check_root = Path(tempfile.mkdtemp(prefix=f'.{directory.name}.recovery-check-', dir=directory.parent))
+    try:   # mkdtemp created a fresh, uniquely named directory owned by this call: only it is removed
+        copy = check_root / directory.name
+        copy.mkdir()
         _write_new(copy / START, start_bytes)
         for name, data in finals.items():
             _write_new(copy / name, data)

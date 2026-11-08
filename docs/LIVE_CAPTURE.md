@@ -169,8 +169,8 @@ the same way. Refused (`ValueError`, nothing written): a manifest already exists
 inconsistent; a data file both final and `.part`, or neither; a complete raw line that is malformed or whose `n`
 is not consecutive; a recovered session that would not verify: the complete result (start record, final files,
 `.part` copies, manifest) is first built in a private sibling directory `.<session>.recovery-check` and checked
-with `verify_session` itself; only a `VERIFIED` result is written into the session directory, and the check
-directory is removed.
+with `verify_session` itself (a uniquely named directory created with `mkdtemp`, owned by this call); only a
+`VERIFIED` result is written into the session directory, and the check directory is removed.
 
 ## 7. CLI
 
@@ -187,6 +187,13 @@ a precondition failure (`FTDI_CORE_FAIL_CLOSED: ...`, nothing created).
 
 ## 8. What a sealed session proves, and what not
 
+All maintenance commands (`seal-session`, `compose-sessions`) assume that no other process writes the session,
+capture or output directories while they run (the same maintenance-window precondition as for every FTDI
+retention command). Within that precondition the guarantees above are exact. Outside it, a concurrent writer can
+at most make a command refuse, or, if it can write a session's events, raw evidence and manifest coherently, give it
+different but self-consistent content — which no local verification can distinguish from genuine evidence (the
+trust boundary stated for every FTDI audit: no signatures or WORM storage).
+
 It proves that every event in `events.jsonl` was delivered by the venue (raw evidence) and that the range
 `first_seq..last_seq` is contiguous with no conflicting delivery. It does **not** prove that the venue's stream
 before `first_seq` or after `last_seq` was captured, nor any latency (phase 2, Task 003 rules).
@@ -198,9 +205,10 @@ sealed session); it continues exactly at `previous.last_seq + 1` (REST catch-up)
 chain never skips a sequence number. A fresh chain (no previous) starts a new, independent range.
 
 `compose_sessions(sessions, output_dir)` / `python -m ftdi_core compose-sessions --session S1 --session S2 ... --output DIR`
-first copies every session into a private snapshot inside the new output directory, verifies the **snapshots**
-against their predecessors in the given order (empty sessions allowed in between) and composes from the same
-snapshots, so a change of an original during composition can never reach the output; it refuses any session that
+first copies every session into a private snapshot inside the new output directory (which must lie outside every
+session directory), verifies the **snapshots** against their predecessors in the given order (empty sessions
+allowed in between) and composes from the same snapshots: the output always equals verified session content, and a
+change of an original after its snapshot was taken cannot reach it; it refuses any session that
 is not `VERIFIED` in this chain, and refuses if any file of any original session (including retained `.part`
 files) differs at the end from its state before the snapshot; it re-checks every output line (canonical Core
 event, contiguous over the declared range), removes the snapshots, removes its own output on any refusal or error,

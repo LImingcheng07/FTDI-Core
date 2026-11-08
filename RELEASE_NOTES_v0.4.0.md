@@ -48,7 +48,7 @@ estimator (backward compatible).
 
 | Suite | Result |
 |---|---|
-| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **408 / 408 OK** (1 skipped by design) |
+| Core (`python -W error::ResourceWarning -m unittest discover -s tests`) | **409 / 409 OK** (1 skipped by design) |
 | Frozen S07 compatibility | **45 / 45 OK** |
 | Live pipeline on 127.0.0.1 (`scripts/acceptance_live_loopback.py`) | **LIVE ACCEPTANCE PASS** |
 | Independent review (Codex) | black-box suite (26) from the contract; three review rounds: 12 + 7 + 6 findings, all fixed with regressions that fail on their pre-fix commits |
