@@ -8,6 +8,7 @@ WebSocket (RFC 6455 server side, text frames, unmasked as servers must): connect
 
     ('trade', seq) | ('trades', first, last)      aggTrade frame(s) from ``trade(seq)``
     ('trade_with', seq, {field: value})           aggTrade frame with overridden / removed (value None) fields
+    ('trade_now', seq)                            aggTrade frame whose venue time E is taken when it is sent
     ('text', str)                                 arbitrary text frame
     ('binary', bytes)                             binary frame
     ('fragmented', seq, parts)                    one aggTrade message split into ``parts`` frames
@@ -164,6 +165,10 @@ class _Connection:
             elif kind == 'trades':
                 for seq in range(action[1], action[2] + 1):
                     self.send(_frame(0x1, _compact(trade(seq, self.venue.symbol)).encode()))
+            elif kind == 'trade_now':
+                record = trade(action[1], self.venue.symbol)
+                record['E'] = int(time.time() * 1000) + self.venue.server_offset_ms
+                self.send(_frame(0x1, _compact(record).encode()))
             elif kind == 'trade_with':
                 record = trade(action[1], self.venue.symbol)
                 for key, value in action[2].items():

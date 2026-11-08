@@ -167,7 +167,10 @@ valid, contiguous events that are supported by raw evidence, cut before any seq 
 A capture killed between the renames of sealing (some data files already final, the others `.part`) is recovered
 the same way. Refused (`ValueError`, nothing written): a manifest already exists; `CAPTURE_START.json` missing or
 inconsistent; a data file both final and `.part`, or neither; a complete raw line that is malformed or whose `n`
-is not consecutive; a would-be manifest that `verify_session` would reject (checked before anything is written).
+is not consecutive; a recovered session that would not verify: the complete result (start record, final files,
+`.part` copies, manifest) is first built in a private sibling directory `.<session>.recovery-check` and checked
+with `verify_session` itself; only a `VERIFIED` result is written into the session directory, and the check
+directory is removed.
 
 ## 7. CLI
 
@@ -195,11 +198,13 @@ sealed session); it continues exactly at `previous.last_seq + 1` (REST catch-up)
 chain never skips a sequence number. A fresh chain (no previous) starts a new, independent range.
 
 `compose_sessions(sessions, output_dir)` / `python -m ftdi_core compose-sessions --session S1 --session S2 ... --output DIR`
-verifies every session against its predecessor in the given order (empty sessions allowed in between), refuses
-any session that is not `VERIFIED` in this chain, refuses if any file of any session changes between the
-verification and the end of the copy (SHA-256 fingerprints before and after), re-checks every output line
-(canonical Core event, contiguous over the declared range), removes its own incomplete output on any refusal, and
-writes a **new** directory with `events.jsonl` (the
+first copies every session into a private snapshot inside the new output directory, verifies the **snapshots**
+against their predecessors in the given order (empty sessions allowed in between) and composes from the same
+snapshots, so a change of an original during composition can never reach the output; it refuses any session that
+is not `VERIFIED` in this chain, and refuses if any file of any original session (including retained `.part`
+files) differs at the end from its state before the snapshot; it re-checks every output line (canonical Core
+event, contiguous over the declared range), removes the snapshots, removes its own output on any refusal or error,
+and writes a **new** directory with `events.jsonl` (the
 concatenation of the sessions' events, contiguous) and `CHAIN_MANIFEST.json` (`schema: "FTDI-Live-Chain-v1"`,
 symbol, lane, first/last seq, count, per session id, path, manifest SHA-256, events SHA-256, range and stop reason,
 and the SHA-256 of the output). The output is an ordinary immutable source:

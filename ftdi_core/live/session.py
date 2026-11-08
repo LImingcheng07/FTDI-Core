@@ -1,17 +1,18 @@
 """Session directory, sealing, read-only verification and recovery (docs/LIVE_CAPTURE.md §4-§6)."""
 from __future__ import annotations
 
+import base64
+import binascii
 from collections import Counter
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import time
 
 from .. import __version__
-import base64
-import binascii
-import re
 
 from .events import FormatError, bytes_records_lenient, canonical, check_event, check_symbol, compare, core_event, \
     lane, loads, parse_rest_page, parse_ws, rest_records_lenient, ws_record_lenient
@@ -337,10 +338,12 @@ def options_problem(endpoints, public_network, limits):
     if public_network:
         if endpoints != PUBLIC_ENDPOINTS:
             return 'endpoints differ from the fixed public endpoints'
-    elif not (isinstance(endpoints['ws'], str) and isinstance(endpoints['rest'], str)
-              and re.fullmatch(r'ws://127\.0\.0\.1:[1-9][0-9]{0,4}', endpoints['ws'])
-              and re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{0,4}', endpoints['rest'])):
-        return 'endpoints are not loopback endpoints'
+    else:
+        for key, scheme in (('ws', 'ws'), ('rest', 'http')):
+            match = isinstance(endpoints[key], str) and re.fullmatch(rf'{scheme}://127\.0\.0\.1:([1-9][0-9]{{0,4}})',
+                                                                    endpoints[key])
+            if not match or int(match.group(1)) > 65535:
+                return 'endpoints are not loopback endpoints'
     return limits_problem(limits, public_network)
 
 
@@ -595,17 +598,44 @@ def seal_session(session_dir, *, apply=False):
     problem = manifest_problem(candidate, directory) or start_problem(start, candidate)
     if problem:
         raise ValueError(f'the recovered session would not be valid ({problem}); nothing written')
+    if 'events.jsonl' not in parts and (directory / 'events.jsonl').read_bytes() != finals['events.jsonl']:
+        raise ValueError('events.jsonl was already sealed with other content; refused')
+    _verify_on_copy(directory, start_bytes, finals, parts, fields)
     for name, data in finals.items():
-        if name not in parts:
-            if name == 'events.jsonl' and (directory / name).read_bytes() != data:
-                raise ValueError('events.jsonl was already sealed with other content; refused')
-            continue   # already final
-        with open(directory / name, 'xb') as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
+        if name in parts:   # files already final (an interrupted seal) stay as they are
+            _write_new(directory / name, data)
     manifest = finish_manifest(directory, fields)
     return {**manifest, 'session_dir': str(directory)}
+
+
+def _write_new(path, data):
+    with open(path, 'xb') as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _verify_on_copy(directory, start_bytes, finals, parts, fields):
+    """Build the recovered session in a private sibling directory and run verify_session on it; nothing is
+    written into the real session unless that copy is VERIFIED. The copy is removed afterwards."""
+    check_root = directory.parent / f'.{directory.name}.recovery-check'
+    if check_root.exists():
+        raise ValueError(f'{check_root.name} exists (an earlier recovery check?); remove it and retry')
+    copy = check_root / directory.name
+    copy.mkdir(parents=True)
+    try:
+        _write_new(copy / START, start_bytes)
+        for name, data in finals.items():
+            _write_new(copy / name, data)
+        for name, data in parts.items():
+            _write_new(copy / f'{name}.part', data)
+        finish_manifest(copy, fields)
+        report = verify_session(copy)
+    finally:
+        shutil.rmtree(check_root, ignore_errors=True)
+    if report['status'] != 'VERIFIED':
+        fatal = sorted(code for code in report['issue_counts'] if code not in NOTICE_CODES)
+        raise ValueError(f'the recovered session would not verify ({fatal}); nothing written')
 
 
 def _recovery_fields(start, symbol, previous, kept, first, last, cut, ws, rest, complete, interpreted, parts):

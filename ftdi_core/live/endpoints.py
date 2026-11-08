@@ -16,6 +16,9 @@ class Endpoint:
 
     @property
     def base(self):
+        """Loopback endpoints always name their port (also 80); the public ones are the fixed host names."""
+        if self.host == '127.0.0.1':
+            return f'{self.scheme}://{self.host}:{self.port}'
         default = {'ws': 80, 'http': 80, 'wss': 443, 'https': 443}[self.scheme]
         return f'{self.scheme}://{self.host}' + ('' if self.port == default else f':{self.port}')
 

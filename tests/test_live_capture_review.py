@@ -298,13 +298,83 @@ class LiveReviewRegressions(unittest.TestCase):
             _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
         real = compose_module.verify_session
 
-        def verify_then_change(session, previous=None):
+        def verify_then_change_original(session, previous=None):
             report = real(session, previous=previous)
-            # a writer appends to the session after it was verified, before it is copied
-            (Path(session) / 'clock.jsonl').write_bytes((Path(session) / 'clock.jsonl').read_bytes() + b'\n')
+            # a writer appends to the ORIGINAL session while it is being composed (and leaves it changed)
+            (path / 'clock.jsonl').write_bytes((path / 'clock.jsonl').read_bytes() + b'\n')
             return report
-        with mock.patch.object(compose_module, 'verify_session', verify_then_change):
+        with mock.patch.object(compose_module, 'verify_session', verify_then_change_original):
             with self.assertRaisesRegex(ValueError, 'changed during composition'):
+                compose_module.compose_sessions([path], self.base / 'chain')
+        self.assertFalse((self.base / 'chain').exists())
+
+    def test_n1_a_transient_change_of_an_original_never_reaches_the_output(self):
+        from ftdi_core.live import compose as compose_module
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        original = (path / 'events.jsonl').read_bytes()
+        forged = original.replace(b'"67002.02000000"', b'"99999"')
+        self.assertNotEqual(forged, original)
+        original_manifest = (path / 'SESSION_MANIFEST.json').read_bytes()
+        manifest = json.loads(original_manifest)
+        import hashlib
+        manifest['files']['events.jsonl'] = {'bytes': len(forged), 'sha256': hashlib.sha256(forged).hexdigest(),
+                                             'lines': forged.count(b'\n')}
+        forged_manifest = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode() + b'\n'
+        real_verify, real_write = compose_module.verify_session, compose_module._write_events
+
+        def verify_then_forge(session, previous=None):
+            report = real_verify(session, previous=previous)
+            # after verification: events and manifest forged consistently
+            (path / 'events.jsonl').write_bytes(forged)
+            (path / 'SESSION_MANIFEST.json').write_bytes(forged_manifest)
+            return report
+
+        def write_then_restore(*args, **kwargs):
+            try:
+                return real_write(*args, **kwargs)
+            finally:   # restored before the final fingerprint
+                (path / 'events.jsonl').write_bytes(original)
+                (path / 'SESSION_MANIFEST.json').write_bytes(original_manifest)
+        with mock.patch.object(compose_module, 'verify_session', verify_then_forge), \
+                mock.patch.object(compose_module, '_write_events', write_then_restore):
+            compose_module.compose_sessions([path], self.base / 'chain')
+        self.assertEqual((self.base / 'chain' / 'events.jsonl').read_bytes(), original)
+        self.assertEqual(sorted(p.name for p in (self.base / 'chain').iterdir()), ['CHAIN_MANIFEST.json', 'events.jsonl'])
+
+    def test_n2_loopback_port_80_sessions_verify(self):
+        from ftdi_core.live.session import options_problem
+        from ftdi_core.live.limits import CaptureLimits as Limits
+        from dataclasses import asdict
+        limits = asdict(Limits())
+        self.assertIsNone(options_problem({'ws': 'ws://127.0.0.1:80', 'rest': 'http://127.0.0.1:80'}, False, limits))
+        for port in ('65536', '99999', '0'):
+            self.assertIsNotNone(options_problem({'ws': f'ws://127.0.0.1:{port}', 'rest': 'http://127.0.0.1:2'},
+                                                 False, limits))
+        from ftdi_core.live.endpoints import resolve
+        self.assertEqual(resolve('ws://127.0.0.1:80', 'http://127.0.0.1:80', False).rest.base, 'http://127.0.0.1:80')
+
+    def test_n5_recovery_refuses_what_would_not_verify(self):
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        target = self.unsealed(path, 'bad_base64')
+        rows = lines(target / 'raw_rest.jsonl.part')
+        rows.append({'n': len(rows), 'kind': 'aggTrades', 'url': 'x', 'status': 200, 't0_wall_ns': 1, 't0_perf_ns': 1,
+                     't1_wall_ns': 2, 't1_perf_ns': 2, 'body': None, 'body_base64': '!!not base64!!', 'error': 'x'})
+        (target / 'raw_rest.jsonl.part').write_bytes(''.join(
+            json.dumps(r, sort_keys=True, separators=(',', ':'), ensure_ascii=False) + '\n' for r in rows).encode())
+        before = sorted(p.name for p in target.iterdir())
+        with self.assertRaisesRegex(ValueError, 'would not verify'):
+            seal_session(target, apply=True)
+        self.assertEqual(sorted(p.name for p in target.iterdir()), before)
+        self.assertFalse(any(p.name.endswith('.recovery-check') for p in target.parent.iterdir()))
+
+    def test_n6_a_failing_chain_manifest_write_leaves_no_output(self):
+        from ftdi_core.live import compose as compose_module
+        with FakeVenue(connections=[[('trades', 1, 3)]]) as venue:
+            _, path = self.capture(venue.ws_url, venue.rest_url, max_events=3)
+        with mock.patch.object(compose_module, 'write_new_json', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(OSError, 'disk full'):
                 compose_module.compose_sessions([path], self.base / 'chain')
         self.assertFalse((self.base / 'chain').exists())
 
