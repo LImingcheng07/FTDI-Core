@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import socket
 import sys
 import tempfile
 import threading
@@ -19,9 +20,11 @@ from ftdi_core.live.compose import compose_sessions
 from ftdi_core.live.endpoints import Endpoint
 from ftdi_core.live.rest import RestClient
 from ftdi_core.service import replay
-from ftdi_core.timeprov import EventTimes, OffsetEstimate, classify_events, percentile_report
+from ftdi_core.timeprov import (EventTimes, OffsetEstimate, OffsetSample, classify_events, estimate_offset,
+                             percentile_report)
 
 MS = 1_000_000
+BASE = 1_700_000_000_000 * MS
 FAST = CaptureLimits(gap_wait_ms=20, gap_timeout_s=1.0, rest_min_interval_s=0, clock_interval_s=3600,
                      ws_read_timeout_s=2.0, max_reconnects=1)
 
@@ -169,6 +172,154 @@ class PilotFindingTests(unittest.TestCase):
             self.assertIn('GetSystemTimeAsFileTime', implementation)
         else:
             self.assertIsNone(resolution)
+
+    # -- review of v0.4.1 (Codex, round 1): F1-F4 ------------------------------------------------------------
+    @staticmethod
+    def _reads(levels_ms, spacing_ms=10, lag_ms=40):
+        """Reads ``spacing_ms`` apart, ``lag_ms`` after the venue event, wall-minus-interval level shifted per read."""
+        out = []
+        for i, level in enumerate(levels_ms):
+            perf = 5_000 * MS + i * spacing_ms * MS
+            wall = BASE + perf + int(level * MS)
+            out.append(EventTimes(venue_event_ms=(BASE + perf - lag_ms * MS) // MS, read_wall_ns=wall,
+                                  read_perf_ns=perf, queue_depth_at_read=0))
+        return out
+
+    @staticmethod
+    def _sample_estimate(level_ms, at_perf_ns=5_000 * MS, **kw):
+        """Estimate from a clock sample taken at interval time ``at_perf_ns`` with the given level (offset 0)."""
+        wall = BASE + at_perf_ns + int(level_ms * MS)
+        sample = OffsetSample(wall - MS // 2, (wall + MS // 2) // MS, wall + MS // 2, at_perf_ns - MS // 2,
+                              at_perf_ns + MS // 2)
+        return estimate_offset([sample], local_resolution_ms=0.0001, **kw)
+
+    def test_p8_each_read_is_checked_against_the_clock_sample_it_is_corrected_with(self):
+        estimate = self._sample_estimate(0)
+        self.assertEqual(estimate.at_perf_ns, 5_000 * MS)
+        stable = classify_events(self._reads([0] * 30), estimate)
+        self.assertTrue(all(e.trusted for e in stable), [e.tags for e in stable if not e.trusted])
+        # the wall clock steps by 30 ms after the sample: reads from the step on are not corrected by it
+        after = classify_events(self._reads([0] * 10 + [30] * 20), estimate)
+        self.assertEqual([('WALL_CLOCK_STEP' in e.tags) for e in after], [False] * 10 + [True] * 20)
+        # the sample was taken after the step (at the new level): the reads before it are the stepped ones
+        new_level = self._sample_estimate(30, at_perf_ns=5_000 * MS + 25 * 10 * MS)
+        before = classify_events(self._reads([0] * 10 + [30] * 20), new_level)
+        self.assertEqual([e.trusted for e in before], [False] * 10 + [True] * 20)
+        self.assertTrue(all('WALL_CLOCK_STEP' in e.tags for e in before[:10]))
+        # one jittered read is an outlier; the measured level difference is part of the uncertainty
+        jitter = classify_events(self._reads([0] * 5 + [9] + [0] * 5 + [3] + [0] * 5), estimate)
+        self.assertEqual([i for i, e in enumerate(jitter) if not e.trusted], [5])
+        self.assertEqual(jitter[5].tags, ('READ_STAMP_OUTLIER',))
+        self.assertAlmostEqual(jitter[11].uncertainty_ms - jitter[10].uncertainty_ms, 3.0, delta=0.01)
+        # a sample during which the wall clock moved against the interval clock is not usable
+        wall = BASE + 5_000 * MS
+        moved = OffsetSample(wall, wall // MS, wall + 12 * MS, 5_000 * MS, 5_000 * MS + 2 * MS)
+        self.assertIsNone(estimate_offset([moved]))
+        self.assertEqual(estimate_offset([moved, OffsetSample(wall, wall // MS, wall + 2 * MS, 5_000 * MS,
+                                                              5_002 * MS)]).samples_rejected, 1)
+        with self.assertRaises(ValueError):
+            OffsetSample(wall, wall // MS, wall + 2 * MS, 5_000 * MS, None)
+
+    def test_p9_an_absurd_clock_resolution_makes_the_session_invalid_not_the_analysis_crash(self):
+        from ftdi_core.live.latency import analyze_session
+        from ftdi_core.live.session import MANIFEST, START, sha256_bytes, start_problem, verify_session
+        with FakeVenue(connections=[[('trades', 1, 5)]]) as venue:
+            result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                     max_events=5, max_seconds=10.0, limits=FAST)
+        session = Path(result['session_dir'])
+        start = json.loads((session / START).read_bytes().decode('utf-8'))
+        for resolution, ok in ((1, True), (10 ** 9, True), (10 ** 9 + 1, False), (10 ** 400, False)):
+            start['clocks']['wall']['resolution_ns'] = resolution
+            self.assertEqual(start_problem(start) is None, ok, resolution)
+        start['clocks']['wall']['resolution_ns'] = 100
+        for implementation, ok in (('x', True), ('', False), ('x' * 200, True), ('x' * 201, False)):
+            start['clocks']['wall']['implementation'] = implementation
+            self.assertEqual(start_problem(start) is None, ok, len(implementation))
+        # end to end (Codex's reproduction): a coherent session whose start record claims 10**400 ns
+        start['clocks']['wall'] = {'implementation': 'x', 'resolution_ns': 10 ** 400}
+        raw = json.dumps(start).encode('utf-8')
+        (session / START).write_bytes(raw)
+        manifest = json.loads((session / MANIFEST).read_bytes().decode('utf-8'))
+        manifest['capture_start_sha256'] = sha256_bytes(raw)
+        (session / MANIFEST).write_text(json.dumps(manifest), encoding='utf-8')
+        report = verify_session(session)
+        self.assertEqual(report['status'], 'INVALID')
+        self.assertIn({'code': 'MANIFEST_INVALID', 'detail': 'CAPTURE_START.json: clocks'}, report['samples'])
+        with self.assertRaisesRegex(ValueError, 'not VERIFIED'):
+            analyze_session(session)
+
+    def test_p10_a_jittered_first_read_is_an_outlier_not_the_reference(self):
+        plain = OffsetEstimate(offset_ms=0.0, uncertainty_ms=2.0, at_wall_ns=BASE + 5_000 * MS, rtt_ms=1.0,
+                               samples_used=1, samples_rejected=0)          # no interval stamps: heuristic rule
+        for estimate in (plain, self._sample_estimate(0)):
+            for first in (9, -9):
+                evidence = classify_events(self._reads([first] + [0] * 50), estimate)
+                self.assertEqual(evidence[0].tags, ('READ_STAMP_OUTLIER',), (first, estimate))
+                self.assertTrue(all(e.trusted for e in evidence[1:]), (first, [e.tags for e in evidence[1:4]]))
+        # a real step after two reads is still a step for the heuristic rule
+        early = classify_events(self._reads([0, 0] + [30] * 30), plain)
+        self.assertEqual([('WALL_CLOCK_STEP' in e.tags) for e in early], [False, False] + [True] * 30)
+
+    def test_p11_slow_drift_within_the_policy_is_not_a_step_but_faster_drift_is(self):
+        def reads(ppm):   # one read every 10 s, the wall clock drifting against the interval clock
+            return [EventTimes(venue_event_ms=(BASE + i * 10_000 * MS - 40 * MS) // MS,
+                               read_wall_ns=BASE + i * 10_000 * MS + i * 10_000 * MS * ppm // 1_000_000,
+                               read_perf_ns=i * 10_000 * MS, queue_depth_at_read=0) for i in range(50)]
+
+        def fresh(ppm, with_perf):   # an estimate taken at the read (Codex's reproduction)
+            def estimate(event):
+                i = event.read_perf_ns // (10_000 * MS)
+                drift_ms = i * 10_000 * ppm / 1_000_000
+                return OffsetEstimate(-drift_ms, 2.0, event.read_wall_ns, 1.0, 1, 0,
+                                      event.read_perf_ns if with_perf else None)
+            return estimate
+        for ppm in (50, -50, 90):
+            for with_perf in (False, True):
+                evidence = classify_events(reads(ppm), fresh(ppm, with_perf))
+                self.assertTrue(all(e.trusted for e in evidence), (ppm, with_perf, [e.tags for e in evidence][18:24]))
+                self.assertTrue(all(abs(e.latency_ms - 40) < 0.01 for e in evidence))
+        evidence = classify_events(reads(400), fresh(400, False))
+        self.assertTrue(any('WALL_CLOCK_STEP' in e.tags for e in evidence), 'drift far beyond the policy')
+
+    def test_p12_name_resolution_and_connect_are_bounded_by_the_deadline(self):
+        from ftdi_core.live import netconnect
+        from ftdi_core.live.wsclient import ConnectionClosed, WebSocket
+        original = socket.getaddrinfo
+
+        def stalled(*args, **kw):
+            time.sleep(1.5)
+            return original(*args, **kw)
+        with FakeVenue() as venue:
+            port = int(venue.rest_url.rsplit(':', 1)[1])
+            records = []
+            client = RestClient(Endpoint('http', '127.0.0.1', port), symbol='BTCUSDT', recorder=records.append,
+                                min_interval_s=0, max_body_bytes=4096)
+            with mock.patch.object(netconnect.socket, 'getaddrinfo', stalled):
+                begin = time.perf_counter()
+                status, body, _ = client.server_time(budget_s=0.3)
+                rest_elapsed = time.perf_counter() - begin
+                begin = time.perf_counter()
+                with self.assertRaises(ConnectionClosed):
+                    WebSocket.connect(Endpoint('ws', '127.0.0.1', int(venue.ws_url.rsplit(':', 1)[1])), '/ws/x',
+                                      timeout=0.3, max_message=4096)
+                ws_elapsed = time.perf_counter() - begin
+            self.assertIsNone(status)
+            self.assertIn('name resolution', records[0]['error'])
+            self.assertLess(rest_elapsed, 1.0)
+            self.assertLess(ws_elapsed, 1.0)
+            # set-up that returns after the budget is a failed attempt, not a late answer (Codex's reproduction)
+            import ftdi_core.live.rest as rest_module
+
+            class SlowConnect(rest_module._HTTP):
+                def connect(self):
+                    time.sleep(0.2)
+                    super().connect()
+            records.clear()
+            with mock.patch.object(rest_module, '_HTTP', SlowConnect):
+                status, body, _ = client.server_time(budget_s=0.05)
+            self.assertIsNone(status)
+            self.assertIsNone(body)
+            self.assertIn('SetupTimeout', records[0]['error'])
 
 
 if __name__ == '__main__':

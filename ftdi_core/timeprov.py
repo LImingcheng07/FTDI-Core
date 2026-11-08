@@ -48,20 +48,36 @@ class TimePolicy:
 
 @dataclass(frozen=True)
 class OffsetSample:
-    """Cristian sample: local wall before the request, venue server time, local wall after."""
+    """Cristian sample: local wall before the request, venue server time, local wall after; optionally the
+    interval-clock stamps taken with the wall stamps (live capture records them), which tie the estimate to the
+    wall clock's level against the interval clock at the sample."""
     t0_wall_ns: int
     venue_ms: int
     t1_wall_ns: int
+    t0_perf_ns: int | None = None
+    t1_perf_ns: int | None = None
 
     def __post_init__(self):
         if not all(type(v) is int for v in (self.t0_wall_ns, self.venue_ms, self.t1_wall_ns)):
             raise ValueError('offset sample fields must be integers')
         if self.t1_wall_ns < self.t0_wall_ns:
             raise ValueError('offset sample has t1 < t0 (wall clock stepped backwards during the request)')
+        perf = (self.t0_perf_ns, self.t1_perf_ns)
+        if perf != (None, None) and not all(type(v) is int for v in perf):
+            raise ValueError('offset sample interval stamps must both be integers or both be absent')
 
     @property
     def rtt_ms(self):
         return (self.t1_wall_ns - self.t0_wall_ns) / 1e6
+
+    def stamps_consistent(self, policy):
+        """False if the wall clock moved against the interval clock during the request (or perf runs backwards)."""
+        if self.t0_perf_ns is None:
+            return True
+        if self.t1_perf_ns < self.t0_perf_ns:
+            return False
+        moved = abs((self.t1_wall_ns - self.t1_perf_ns) - (self.t0_wall_ns - self.t0_perf_ns))
+        return moved <= policy.wall_step_tolerance_ms * 1e6
 
 
 @dataclass(frozen=True)
@@ -72,6 +88,7 @@ class OffsetEstimate:
     rtt_ms: float
     samples_used: int
     samples_rejected: int
+    at_perf_ns: int | None = None   # interval-clock time of at_wall_ns, when the sample carried interval stamps
 
 
 @dataclass(frozen=True)
@@ -107,7 +124,7 @@ def estimate_offset(samples, *, venue_resolution_ms=1.0, local_resolution_ms=Non
     """Minimum-RTT Cristian estimate, or None if no sample is usable."""
     if local_resolution_ms is None:
         local_resolution_ms = time.get_clock_info('time').resolution * 1000
-    usable = [s for s in samples if s.rtt_ms <= policy.max_rtt_ms]
+    usable = [s for s in samples if s.rtt_ms <= policy.max_rtt_ms and s.stamps_consistent(policy)]
     if not usable:
         return None
     best = min(usable, key=lambda s: (s.rtt_ms, s.t0_wall_ns))
@@ -116,7 +133,8 @@ def estimate_offset(samples, *, venue_resolution_ms=1.0, local_resolution_ms=Non
     return OffsetEstimate(offset_ms=offset_ms,
                           uncertainty_ms=best.rtt_ms / 2 + venue_resolution_ms + local_resolution_ms,
                           at_wall_ns=(best.t0_wall_ns + best.t1_wall_ns) // 2, rtt_ms=best.rtt_ms,
-                          samples_used=len(usable), samples_rejected=len(samples) - len(usable))
+                          samples_used=len(usable), samples_rejected=len(samples) - len(usable),
+                          at_perf_ns=None if best.t0_perf_ns is None else (best.t0_perf_ns + best.t1_perf_ns) // 2)
 
 
 def uncertainty_at(estimate, wall_ns, policy=TimePolicy()):
@@ -128,16 +146,31 @@ def classify_events(events, estimate, policy=TimePolicy()):
     """One LatencyEvidence per event; exclusion tags make a sample untrusted.
 
     ``estimate`` is one OffsetEstimate (or None) for all events, or a callable ``event -> OffsetEstimate | None``
-    (e.g. the nearest minimum-RTT sample of a long capture)."""
+    (e.g. the nearest minimum-RTT sample of a long capture).
+
+    Wall clock against interval clock: when both the read and the estimate's clock sample carry interval stamps,
+    each read is checked directly against the sample. The wall-minus-interval level of the read must equal the
+    sample's within the tolerance plus the allowed drift over the time between them; otherwise the wall clock
+    moved between the sample and the read and the offset does not apply to that read. The read is tagged
+    READ_STAMP_OUTLIER if it also departs from its neighbouring reads, else WALL_CLOCK_STEP. The measured level
+    difference is added to the uncertainty. Without interval stamps on the sample, a heuristic on the reads alone
+    applies (``_stamp_levels``: the first lasting shift tags every later read)."""
     estimate_for = estimate if callable(estimate) else (lambda event: estimate)
     events = list(events)
     step_at, outliers = _stamp_levels(events, policy)
+    tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
     evidences = []
     for index, event in enumerate(events):
         estimate = estimate_for(event)
         tags = []
         raw = (event.read_wall_ns - event.venue_event_ms * 1_000_000) / 1e6
-        if step_at is not None and index >= step_at:
+        moved_ms = 0.0
+        if event.read_perf_ns is not None and estimate is not None and estimate.at_perf_ns is not None:
+            moved = abs((event.read_wall_ns - event.read_perf_ns) - (estimate.at_wall_ns - estimate.at_perf_ns))
+            moved_ms = moved / 1e6
+            if moved > tolerance_ns + rate * abs(event.read_perf_ns - estimate.at_perf_ns):
+                tags.append('READ_STAMP_OUTLIER' if index in outliers else 'WALL_CLOCK_STEP')
+        elif step_at is not None and index >= step_at:
             tags.append('WALL_CLOCK_STEP')
         elif index in outliers:
             tags.append('READ_STAMP_OUTLIER')
@@ -151,7 +184,7 @@ def classify_events(events, estimate, policy=TimePolicy()):
         else:
             if abs(event.read_wall_ns - estimate.at_wall_ns) / 1e9 > policy.max_offset_age_s:
                 tags.append('OFFSET_STALE')
-            uncertainty = uncertainty_at(estimate, event.read_wall_ns, policy)
+            uncertainty = uncertainty_at(estimate, event.read_wall_ns, policy) + moved_ms
             if uncertainty > policy.max_offset_uncertainty_ms:
                 tags.append('OFFSET_UNCERTAIN')
             latency = raw + estimate.offset_ms
@@ -163,33 +196,50 @@ def classify_events(events, estimate, policy=TimePolicy()):
 
 
 STEP_CONFIRM = 20   # a wall-clock step must dominate this many following reads (jitter and short runs revert)
+MIN_REFERENCE = 2   # preceding reads needed before a read's level is judged against them
 
 
 def _stamp_levels(events, policy):
-    """(index of the first wall-clock step or None, indices of outlying reads before it).
+    """(index of the first lasting wall-clock shift or None, indices of outlying reads), from the reads alone.
 
-    A read *deviates* when its wall-minus-interval level departs from the median level of the preceding
-    STEP_CONFIRM reads by more than the tolerance. It starts a step when the median level of this and the next
-    STEP_CONFIRM reads (at least two reads) departs as well: a lasting shift, as a clock correction is. Otherwise
-    the read is an outlier: its wall stamp disagrees with its neighbours by more than the tolerance (jitter, a
-    short run of quantised stamps as in the 2026-11-08 pilot), so that read alone is excluded. Slow drift moves the
-    level by much less than the tolerance between neighbouring windows."""
-    tolerance_ns = policy.wall_step_tolerance_ms * 1e6
-    levels = [None if e.read_perf_ns is None else e.read_wall_ns - e.read_perf_ns for e in events]
-    outliers = set()
-    for i in range(1, len(levels)):
-        if levels[i] is None:
+    The level of a read is its wall stamp minus its interval stamp. Levels are compared with the allowed drift
+    (``policy.drift_ppm``) over the time between them added to the tolerance, so slow drift is not a shift. A read
+    *deviates* when its level departs from the median of the preceding STEP_CONFIRM accepted reads (outliers are
+    never a reference); it starts a lasting shift when the median of this and the next STEP_CONFIRM reads (at
+    least two) departs as well, otherwise it is an outlier (jitter; a short run of quantised stamps as in the
+    2026-11-08 pilot). While fewer than MIN_REFERENCE reads are accepted, a read is an outlier if it departs from
+    the following MIN_REFERENCE reads and from the accepted reads before it (if any): a deviating first read is
+    excluded instead of becoming the reference that makes every later read look shifted, and two consistent reads
+    before a lasting shift remain its reference."""
+    tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
+    points = [(i, e.read_perf_ns, e.read_wall_ns - e.read_perf_ns) for i, e in enumerate(events)
+              if e.read_perf_ns is not None]
+
+    def departs(level, at, window):
+        reference = statistics.median_low([v for _, _, v in window])
+        centre = statistics.median_low([t for _, t, _ in window])
+        return abs(level - reference) > tolerance_ns + rate * abs(at - centre)
+
+    outliers, accepted = set(), []
+    for k, point in enumerate(points):
+        index, at, level = point
+        before = accepted[-STEP_CONFIRM:]
+        if len(before) < MIN_REFERENCE:
+            following = points[k + 1:k + 1 + MIN_REFERENCE]
+            if len(following) == MIN_REFERENCE and departs(level, at, following) \
+                    and (not before or departs(level, at, before)):
+                outliers.add(index)
+            else:
+                accepted.append(point)
             continue
-        before = [v for v in levels[max(0, i - STEP_CONFIRM):i] if v is not None]
-        if not before:
+        if not departs(level, at, before):
+            accepted.append(point)
             continue
-        reference = statistics.median(before)
-        if abs(levels[i] - reference) <= tolerance_ns:
-            continue
-        after = [v for v in levels[i:i + STEP_CONFIRM + 1] if v is not None]
-        if len(after) >= 2 and abs(statistics.median(after) - reference) > tolerance_ns:
-            return i, outliers
-        outliers.add(i)
+        after = points[k:k + STEP_CONFIRM + 1]
+        if len(after) >= 2 and departs(statistics.median_low([v for _, _, v in after]),
+                                       statistics.median_low([t for _, t, _ in after]), before):
+            return index, outliers
+        outliers.add(index)
     return None, outliers
 
 

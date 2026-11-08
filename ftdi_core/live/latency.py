@@ -21,7 +21,8 @@ def _lines(path):
 
 def nearest_estimator(samples, policy, local_resolution_ms=None):
     """event -> minimum-RTT estimate among the samples within ``max_offset_age_s`` of the event's read time."""
-    usable = sorted((s for s in samples if s.rtt_ms <= policy.max_rtt_ms), key=lambda s: s.t0_wall_ns)
+    usable = sorted((s for s in samples if s.rtt_ms <= policy.max_rtt_ms and s.stamps_consistent(policy)),
+                    key=lambda s: s.t0_wall_ns)
     window_ns = int(policy.max_offset_age_s * 1e9)
 
     def estimate(event):
@@ -50,8 +51,8 @@ def analyze_session(session_dir, *, policy=TimePolicy()):
         raise ValueError(f'session is not VERIFIED: {sorted(report["issue_counts"])}')
     manifest = json.loads((session / MANIFEST).read_bytes().decode('utf-8'))
     first, last = manifest['first_seq'], manifest['last_seq']
-    samples = [OffsetSample(s['t0_wall_ns'], s['venue_ms'], s['t1_wall_ns']) for s in _lines(session / 'clock.jsonl')
-               if s['t1_wall_ns'] >= s['t0_wall_ns']]
+    samples = [OffsetSample(s['t0_wall_ns'], s['venue_ms'], s['t1_wall_ns'], s['t0_perf_ns'], s['t1_perf_ns'])
+               for s in _lines(session / 'clock.jsonl') if s['t1_wall_ns'] >= s['t0_wall_ns']]
     events, seen, rest_only = [], set(), 0
     for record in _lines(session / 'raw_ws.jsonl'):
         try:

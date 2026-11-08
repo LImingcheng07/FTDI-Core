@@ -26,10 +26,18 @@ The local Windows clock was also not synchronised (w32tm Leap indicator 3), whic
   (`clocks: {wall, interval}`).
 * **Clock-sample timing** (`/api/v3/time`): the connection (TCP, TLS) is established first; `t0`/`t1` bracket only
   the request and its answer. A REST record whose connection failed has `t0 = t1`.
-* **Wall-clock steps** (Task 003 rule, ADR-008 amendment): `WALL_CLOCK_STEP` needs a lasting shift of the
-  wall-minus-interval level (the median of this and the next 20 reads departs from the median of the preceding
-  20 by more than the 5 ms tolerance). A read that deviates without a lasting shift is excluded on its own with the
-  new tag `READ_STAMP_OUTLIER`.
+* **Wall clock against interval clock** (Task 003 rule, ADR-008 amendment): each read is checked against the
+  wall-minus-interval level of the clock sample that corrects it (5 ms tolerance plus the 100 ppm drift bound over
+  the time between them). If the wall clock moved, the offset does not apply to that read (`WALL_CLOCK_STEP`, or
+  the new tag `READ_STAMP_OUTLIER` if the read also departs from its neighbours); a smaller difference is added to
+  the uncertainty. A clock sample during which the wall clock moved is discarded. Without interval stamps on the
+  sample (other callers of the model), a heuristic on the reads: a step needs a lasting shift (medians over 20
+  reads, drift allowed for), a deviating read is excluded alone and never used as a reference.
+* **Bounded connection set-up**: name resolution (which has no timeout of its own) runs in a worker thread that
+  is abandoned at the deadline, for REST and WebSocket; a REST connection set up after its budget is a failed
+  attempt, not a late answer.
+* **Clock records bounded**: `resolution_ns` must be an integer from 1 to 10^9 and `implementation` 1-200
+  characters, otherwise the session is INVALID (an absurd value could otherwise crash the latency analysis).
 * **Report status `NO_TRUSTED_SAMPLES`** when latencies could be corrected but no sample is trusted (v0.4.0 said
   `ESTIMATED` with 0 trusted samples). The local clock resolution in the offset uncertainty is the session's
   recorded wall-clock resolution (15.625 ms assumed on Windows for v0.4.0 sessions); the report states it
@@ -39,8 +47,13 @@ The local Windows clock was also not synchronised (w32tm Leap indicator 3), whic
   instead of noting `SOURCE_MANIFEST_ABSENT`.
 
 Re-analysed read-only with these rules, the pilot sessions have no `WALL_CLOCK_STEP` tag, status
-`NO_TRUSTED_SAMPLES` (`OFFSET_UNCERTAIN` from the slow clock samples; 88 + 12 `READ_STAMP_OUTLIER` reads from the
-coarse clock), figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json` (`reanalysis_v041`).
+`NO_TRUSTED_SAMPLES` (`OFFSET_UNCERTAIN` from the slow clock samples; 7 `READ_STAMP_OUTLIER` reads in session 1),
+figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json` (`reanalysis_v041`).
+
+The independent review (Codex) of the first v0.4.1 candidate found four defects, all fixed with regressions:
+an absurd clock resolution passed verification and crashed the analysis (F1); a jittered first read became the
+reference and tagged every later read (F2, inherited from v0.4.0); slow drift within the policy looked like a step
+with sparse reads (F3); name resolution and connection set-up were not bounded by the deadline (F4, inherited).
 
 ## Compatibility
 
@@ -50,8 +63,10 @@ coarse clock), figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json` (`reanalysis_
   additional `clocks` field). Use v0.4.1 to verify new sessions.
 * A composed chain directory has a third file, `source_manifest.json`. Chains composed by v0.4.0 stay valid; their
   runs keep the notice `SOURCE_MANIFEST_ABSENT`.
-* Latency and clock-evidence reports (also `analyze-clock-evidence --pilot-db`) apply the new step rule; they may
-  contain the new tag `READ_STAMP_OUTLIER`, the new status `NO_TRUSTED_SAMPLES` and the field `session_wall_clock`.
+* Latency and clock-evidence reports apply the new rules; they may contain the new tag `READ_STAMP_OUTLIER`,
+  the new status `NO_TRUSTED_SAMPLES` and the field `session_wall_clock`. `analyze-clock-evidence --pilot-db` has
+  no interval stamps and is unchanged. The model's `OffsetSample` and `OffsetEstimate` gained optional fields
+  (`t0_perf_ns`, `t1_perf_ns`; `at_perf_ns`); existing calls keep working.
 * No change to the historical pipeline, the delivery protocol, the consumer or its databases, retention,
   `archive-producer` or `vacuum-db`.
 

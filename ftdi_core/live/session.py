@@ -349,11 +349,15 @@ def options_problem(endpoints, public_network, limits):
     return limits_problem(limits, public_network)
 
 
+MAX_CLOCK_RESOLUTION_NS = 1_000_000_000   # a clock coarser than 1 s cannot serve as capture evidence
+
+
 def _clocks_ok(clocks):
     return (isinstance(clocks, dict) and set(clocks) == {'wall', 'interval'}
             and all(isinstance(c, dict) and set(c) == {'implementation', 'resolution_ns'}
-                    and isinstance(c['implementation'], str) and type(c['resolution_ns']) is int
-                    and c['resolution_ns'] >= 1 for c in clocks.values()))
+                    and isinstance(c['implementation'], str) and 0 < len(c['implementation']) <= 200
+                    and type(c['resolution_ns']) is int and 1 <= c['resolution_ns'] <= MAX_CLOCK_RESOLUTION_NS
+                    for c in clocks.values()))
 
 
 def start_problem(start, m=None):

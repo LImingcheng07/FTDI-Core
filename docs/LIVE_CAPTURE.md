@@ -82,8 +82,10 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   failures (transport errors, non-200, a body without an integer `serverTime`) are recorded and do not stop the
   capture.
 * Deadlines: every WebSocket handshake completes within `ws_read_timeout_s` and before the capture deadline;
-  every REST call (connect, headers, body) completes within 8 s and before the capture deadline, else it is
-  aborted and recorded as a transport error. A capture therefore ends at most a few seconds after
+  every REST call (name resolution, connect, headers, body) completes within 8 s and before the capture deadline,
+  else it is aborted and recorded as a transport error. Name resolution has no timeout of its own: it runs in a
+  worker thread that is abandoned at the deadline (since v0.4.1); a connection set up after the budget is a
+  failed attempt, not a late answer. A capture therefore ends at most a few seconds after
   `max_seconds` (the final clock sample has its own 2 s budget).
 * HTTP 429 or 418 on any REST call → `RATE_LIMITED` (the `Retry-After` value is recorded in `error`, nothing is
   retried). At the final clock sample it turns `MAX_EVENTS` / `MAX_SECONDS` / `INTERRUPTED` into `RATE_LIMITED`;
@@ -119,7 +121,7 @@ exists). While capturing, files carry the suffix `.part`; sealing renames them. 
 | `raw_ws.jsonl` | WebSocket text message as received | `conn`, `n` (0-based, session-wide), `read_wall_ns`, `read_perf_ns`, `queue_depth`, `text` |
 | `raw_rest.jsonl` | REST response | `n`, `kind` (`aggTrades`/`time`), `url`, `status`, `t0_wall_ns`, `t0_perf_ns`, `t1_wall_ns`, `t1_perf_ns`, `body` (text, or `null` on transport error or unusable body), `body_base64` (received bytes when the body is too large or not UTF-8, else `null`), `error` (string or `null`) |
 | `clock.jsonl` | successful time sample | `t0_wall_ns`, `t0_perf_ns`, `venue_ms`, `t1_wall_ns`, `t1_perf_ns` |
-| `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest), and since v0.4.1 `clocks` (`{wall, interval}`: `implementation`, `resolution_ns`); v0.4.0 sessions without `clocks` remain valid |
+| `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest), and since v0.4.1 `clocks` (`{wall, interval}`: `implementation` (1-200 characters), `resolution_ns` (integer 1..10^9)); v0.4.0 sessions without `clocks` remain valid |
 | `SESSION_MANIFEST.json` | — | below; written last, atomically |
 
 Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing.
@@ -238,5 +240,7 @@ ADR-008 rules (`docs/TASK003_TIME_PROVENANCE_DESIGN.md`) to the WebSocket messag
 event (events recovered only by REST have no read time and are counted separately). Each event uses the
 minimum-RTT clock sample within `max_offset_age_s` of its read time; the local clock resolution in the
 uncertainty is the session's recorded wall-clock resolution (15.625 ms assumed on Windows for v0.4.0 sessions). A
-report with corrected but no trusted samples has status `NO_TRUSTED_SAMPLES`. Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)
+report with corrected but no trusted samples has status `NO_TRUSTED_SAMPLES`. Clock samples carry interval
+stamps, so each read is checked against the wall-minus-interval level of the sample that corrects it (a moved wall
+clock excludes that read; a smaller difference is added to its uncertainty). Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)
 exclude samples; percentiles need 20 / 100 / 1000 trusted samples; nothing is certified.

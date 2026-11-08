@@ -44,10 +44,12 @@ Implemented in v0.4.1:
   wall-minus-interval spread 0.15 ms over 1 s against 1.27 ms for `time.time_ns()` at the time of measurement);
   the clocks used are recorded in `CAPTURE_START.json`; v0.4.0 sessions are analysed with the coarse resolution.
 * Clock samples time only the request on an established connection (TCP/TLS setup excluded from the round trip).
-* A wall-clock step must be a lasting shift of the wall-minus-interval level (median over the next 20 reads);
-  a read that deviates by more than the 5 ms tolerance without a lasting shift is excluded on its own
-  (`READ_STAMP_OUTLIER`). Re-analysing this pilot with the new rules removes every `WALL_CLOCK_STEP` tag
-  (figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json`, `reanalysis_v041`).
+* Each read is checked against the wall-minus-interval level of the clock sample that corrects it (the
+  samples have always recorded interval stamps): the wall clock moving between sample and read excludes that read
+  only; a smaller difference is added to its uncertainty. Without interval stamps on a sample, a step must be a
+  lasting shift and a deviating read is excluded alone (`READ_STAMP_OUTLIER`). Re-analysing this pilot removes
+  every `WALL_CLOCK_STEP` tag; 7 reads of session 1 are `READ_STAMP_OUTLIER` (figures in
+  `examples/REAL_LIVE_PILOT_EVIDENCE.json`, `reanalysis_v041`).
 * A composed chain carries a `source_manifest.json` the archive-aware audit checks (no `SOURCE_MANIFEST_ABSENT`).
 * A latency report with 0 trusted samples has status `NO_TRUSTED_SAMPLES` (this pilot, re-analysed).
 * Not changed: the Windows clock was not synchronised; a latency claim also needs a synchronised clock.

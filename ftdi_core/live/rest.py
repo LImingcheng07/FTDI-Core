@@ -9,6 +9,7 @@ import threading
 import time
 import urllib.parse
 
+from . import netconnect
 from .clocks import wall_time_ns
 
 
@@ -75,15 +76,19 @@ class RestClient:
         self._last = time.perf_counter()
         status = body = body_base64 = error = retry_after = None
         t0_wall = t0_perf = None
+        deadline = time.perf_counter() + budget
         if self.endpoint.scheme == 'https':
             conn = _HTTPS(self.endpoint.host, self.endpoint.port, timeout=budget, context=ssl.create_default_context())
         else:
             conn = _HTTP(self.endpoint.host, self.endpoint.port, timeout=budget)
+        # name resolution and TCP connect bounded by the deadline (getaddrinfo itself has no timeout)
+        conn._create_connection = lambda address, *_args, **_kw: netconnect.connect(address[0], address[1], deadline)
         timer = threading.Timer(budget, _abort, args=(conn,))
         timer.daemon = True
         timer.start()
         try:
             conn.connect()   # TCP (+TLS) first: the stamps below bracket only the request and its answer
+            netconnect.remaining(deadline)   # set-up that overran the budget is a failed attempt, not a late answer
             t0_wall, t0_perf = wall_time_ns(), time.perf_counter_ns()
             conn.request('GET', target, headers={'Accept': 'application/json', 'Connection': 'close',
                                                  'User-Agent': 'FTDI-Core-readonly'})

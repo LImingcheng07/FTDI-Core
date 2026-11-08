@@ -14,6 +14,8 @@ import struct
 import threading
 import time
 
+from . import netconnect
+
 GUID = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 MAX_HANDSHAKE = 16384
 MAX_FRAGMENTS = 1024
@@ -49,7 +51,8 @@ class WebSocket:
                 raise ConnectionClosed('handshake did not complete in time')
             return left
         try:
-            raw = socket.create_connection((endpoint.host, endpoint.port), timeout=remaining())
+            remaining()
+            raw = netconnect.connect(endpoint.host, endpoint.port, end)   # resolution included in the deadline
         except OSError as exc:
             raise ConnectionClosed(f'connect failed: {exc}') from None
         sock = raw
