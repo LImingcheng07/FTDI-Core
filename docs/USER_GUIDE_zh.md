@@ -1,4 +1,4 @@
-# FTDI-Core v0.3.0 使用手册
+# FTDI-Core v0.3.1 使用手册
 
 > 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
 > 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
@@ -10,14 +10,14 @@
 
 - Windows 10/11，Python **3.10+**（只用标准库，无需安装任何依赖包）。
 - **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
-- 解压发布包 `FTDI-Core-v0.3.0-windows.zip`，在解压出的 `FTDI-Core-v0.3.0` 目录里打开 PowerShell。
+- 解压发布包 `FTDI-Core-v0.3.1-windows.zip`，在解压出的 `FTDI-Core-v0.3.1` 目录里打开 PowerShell。
 
 一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
-python -m ftdi_core --version                  # ftdi-core 0.3.0
+python -m ftdi_core --version                  # ftdi-core 0.3.1
 ```
 
 ## 2. 一条完整的数据链路
@@ -124,11 +124,13 @@ python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3 --apply    #
 python -m ftdi_core vacuum-db --db C:\ftdi\run\lanes\BTC\state.sqlite3 --apply # 生产端库同理
 ```
 
-- 全程独占该数据库：只要有任何程序打开着它（哪怕空闲），就拒绝执行；执行期间别的程序也无法读写它。
+- 全程独占该数据库：如果有程序正在读写它（或在 WAL 模式下读过它），就拒绝执行；执行期间别的程序无法读写它。
+  执行前请先停掉所有使用该库的 FTDI 程序（维护窗口）。
 - 先把原库**逐字节复制**成 `effects.sqlite3.pre-vacuum-<时间>`，并核对副本与原库逻辑内容完全相同，**然后**才让 SQLite
   在原文件上执行它自带的、带事务保护的 `VACUUM`，结束后再逐表逐行核对内容未变。数据库文件始终在原位，不会出现"文件不见了"的状态。
 - **这份副本不会被删除**。确认无误（例如跑一次 `audit-e2e-archive`）后，由您自己决定是否删除它。
-- 库文件是链接/硬链接、`-wal` 文件可疑等情况一律拒绝，不做任何写入。
+- 库文件是链接/硬链接、`-wal`/`-shm` 不是这个库自己的 SQLite 文件、库里有 FTDI 不认识的对象（视图、全文索引、
+  额外的表或生成列等）一律拒绝，不做任何写入。
 - 需要的空闲空间见演练结果里的 `space_needed_bytes`（一份副本加上整理用的临时空间）。全天实测：压缩后的消费端库约 400 MiB → 约 61 MiB。
 
 ## 5. 一键全天验收（推荐每次升级后执行）
@@ -183,7 +185,7 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 
 | 文档 | 内容 |
 |---|---|
-| `RELEASE_NOTES_v0.3.0.md` | 本版本变化 |
+| `RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
 | `docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
 | `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |
 | `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |

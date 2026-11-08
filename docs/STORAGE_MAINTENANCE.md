@@ -23,7 +23,10 @@ Python API: `ftdi_core.storage_maintenance.vacuum_db(path, *, apply=False) -> di
 
 ## Accepted databases
 
-Only FTDI databases are accepted (anything else is refused with `ValueError`):
+Only FTDI databases are accepted (anything else is refused with `ValueError`). Every schema object must be one
+FTDI itself creates (tables, indexes, the consumer insert-guard trigger, automatic indexes, `sqlite_sequence`);
+views, virtual/FTS tables, foreign tables, indexes or triggers, and hidden or generated columns are refused,
+because `VACUUM` may renumber implicit rowids and objects FTDI does not know could depend on them:
 
 * **producer lane DB**: has the tables `meta`, `raw_journal`, `outbox`, `delivery`, `disposition`, `pending`;
   reported as `"kind": "producer"`;
@@ -56,9 +59,12 @@ WAL with a normal connection (logical content unchanged). Output fields:
 
 ## Apply
 
-`vacuum-db` holds an **exclusive SQLite lock for the whole operation** (`locking_mode=EXCLUSIVE`): if any other
-connection of any process has the database open, even idle, the command is refused (`database in use`), and
-while it runs nobody else can read or write the database. The original file is changed only by SQLite's own
+`vacuum-db` holds an **exclusive SQLite lock for the whole operation** (`locking_mode=EXCLUSIVE`): if another
+connection of any process holds a SQLite lock (a read or write transaction, or, in WAL mode, a connection that
+has already read), the command is refused (`database in use`); while it runs nobody else can open a read or
+write transaction. A connection that holds no lock is undetectable; it cannot change anything during the run and
+sees identical logical content afterwards. Stop all FTDI programs using the database first (maintenance
+window). The original file is changed only by SQLite's own
 transactional `VACUUM`, after a byte copy of it has been made **and verified**.
 
 Steps, in this order. A refusal before step 5 leaves the database at `PATH` with identical logical content
@@ -67,8 +73,12 @@ run created:
 
 1. Path checks: a regular file, not a link, not reached through a link or junction (its real path equals the
    given path), exactly one hard link; `PATH-journal` absent; `PATH-wal` / `PATH-shm`, when present, regular
-   files with one hard link each that are not the database itself, and a non-empty `PATH-wal` must start with
-   the SQLite WAL magic. Otherwise refused before any SQLite open.
+   files with one hard link each that are not the database itself and are structurally SQLite files of this
+   database (non-empty `PATH-wal`: WAL magic, version 3007000, the database's page size and a valid header
+   checksum; non-empty `PATH-shm`: a multiple of 32 KiB with a valid, duplicated index header). Otherwise
+   refused before any SQLite open, so a foreign file at a sidecar name is never truncated or deleted. The checks
+   are repeated under the exclusive lock, and a sidecar replaced since the first check is refused, before the
+   first write (the checkpoint).
 2. Open `PATH`, take the exclusive lock (refused if impossible), check the database kind, compute the logical
    digest.
 3. Fold the WAL into the file (`wal_checkpoint(TRUNCATE)`); check free space: in the directory for one copy of
@@ -92,7 +102,8 @@ kept copy is never deleted by FTDI. Command-line usage errors (missing `--db`) e
 
 SHA-256 (domain `FTDI-logical-digest-v2`) over self-delimiting records of four kinds: every `sqlite_master` row
 `(type, name, tbl_name, sql)` of the main schema sorted by `(type, name)` (automatic indexes and
-`sqlite_sequence` included), then per table in name order a header (name, column count), every row ordered by
+`sqlite_sequence` included), then per table in name order a header (name, column count, all columns from
+`table_xinfo`, i.e. including generated columns), every row ordered by
 `typeof(c), c COLLATE BINARY` for all columns, and an end record with the row count. Values are type-tagged
 (NULL, INTEGER, REAL as exact hex, TEXT and BLOB length-prefixed). Independent of page layout and rowids; any
 changed, added, removed or moved row, table, index, view or trigger changes it. The only residual ordering tie

@@ -12,17 +12,23 @@ python -m ftdi_core vacuum-db --db C:\ftdi\consumer\effects.sqlite3 --apply    #
 ```
 
 Retention deletes rows but SQLite only reuses the freed pages, so a compacted consumer DB stayed at its full
-size. `vacuum-db` holds an exclusive SQLite lock for the whole operation (any other open connection, even idle, is
-a refusal), makes a byte copy `<db>.pre-vacuum-<UTC timestamp>` and verifies it (SHA-256 re-read and the logical
+size. `vacuum-db` accepts only databases whose every schema object FTDI itself creates, holds an exclusive SQLite
+lock for the whole operation (a connection holding a lock elsewhere is a refusal; nobody can read or write
+meanwhile), makes a byte copy `<db>.pre-vacuum-<UTC timestamp>` and verifies it (SHA-256 re-read and the logical
 digest: schema, indexes, triggers and every row of every table), and only then runs SQLite's transactional
 `VACUUM` in place and re-verifies integrity, settings and the digest. The database path never disappears; **the
-copy is never deleted by FTDI** — the owner removes it after verifying. Links, junctions, hard links and foreign
-sidecar files are refused before any write. Contract: `docs/STORAGE_MAINTENANCE.md`.
+copy is never deleted by FTDI** — the owner removes it after verifying. Links, junctions, hard links and sidecar
+files that are not structurally this database's WAL/shared-memory files are refused before any write.
+Contract: `docs/STORAGE_MAINTENANCE.md`.
 
-An independent review of a first rename-based design (9 findings, incl. one critical: a checkpoint through a
-hard-linked `-wal` could truncate the only original) led to this in-place design. The rename windows (path
-missing, late commit lost, foreign temp file deleted) no longer exist by construction; the other findings have
-regression tests that fail on the first design (mutation-checked).
+Two independent reviews (Codex) shaped it. The first (9 findings, incl. one critical: a checkpoint through a
+hard-linked `-wal` could truncate the only original) replaced a rename-based design by this in-place one; the
+rename windows (path missing, late commit lost, foreign temp file deleted) no longer exist by construction. The
+second (7 findings: foreign sidecars with a plausible header, a sidecar link between check and open, rowid-
+dependent objects such as external-content FTS, generated columns, partial copies after an I/O error, a late
+stat failure, an over-stated idle-connection claim) led to the schema whitelist, structural sidecar checks
+repeated under the lock, and fixes. Every finding has a regression test that fails on the design before its
+fix (mutation-checked).
 
 ## Changed
 

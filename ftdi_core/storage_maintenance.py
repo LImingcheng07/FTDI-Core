@@ -13,15 +13,26 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import struct
 import tempfile
 import time
 
 from .archive_e2e import _Snapshot, _Unopenable
 
 PRODUCER_TABLES = frozenset({'meta', 'raw_journal', 'outbox', 'delivery', 'disposition', 'pending'})
+# Every schema object FTDI itself creates (durable_stream, retention, external_delivery, consumer_retention).
+# Anything else (virtual/FTS tables, views, foreign tables, indexes or triggers, generated columns) is refused:
+# VACUUM may renumber implicit rowids, and objects FTDI does not know could depend on them.
+PRODUCER_OBJECTS = frozenset({
+    ('table', 'meta'), ('table', 'raw_journal'), ('table', 'lanes'), ('table', 'pending'), ('table', 'outbox'),
+    ('table', 'delivery'), ('table', 'disposition'), ('table', 'archive_segments'), ('table', 'sqlite_sequence'),
+    ('index', 'idx_unprocessed'), ('index', 'idx_outbox_delivery'), ('index', 'idx_retention_outbox_raw'),
+    ('index', 'idx_retention_delivery_raw'), ('index', 'idx_retention_pending_raw')})
+CONSUMER_OBJECTS = frozenset({
+    ('table', 'effects'), ('table', 'consumer_meta'), ('table', 'lane_ids'), ('table', 'retention_state'),
+    ('table', 'effect_digests'), ('table', 'effect_segments'), ('trigger', 'effects_guard_compacted')})
 MARGIN_BYTES = 16 * 2**20
 DIGEST_DOMAIN = b'FTDI-logical-digest-v2\n'
-WAL_MAGIC = (b'\x37\x7f\x06\x82', b'\x37\x7f\x06\x83')
 COPY_CHUNK = 1 << 20
 
 
@@ -62,7 +73,7 @@ def logical_digest(db):
     for row in schema:
         digest.update(_encode(b'M', tuple(row)))
     for name in sorted(row[1] for row in schema if row[0] == 'table'):
-        columns = [_quote(info[1]) for info in db.execute(f'PRAGMA main.table_info({_quote(name)})')]
+        columns = [_quote(info[1]) for info in db.execute(f'PRAGMA main.table_xinfo({_quote(name)})')]
         digest.update(_encode(b'T', (name, len(columns))))
         order = ', '.join(f'typeof({c}), {c} COLLATE BINARY' for c in columns)
         count = 0
@@ -74,12 +85,26 @@ def logical_digest(db):
 
 
 def _kind(db):
-    tables = {row[0] for row in db.execute("SELECT name FROM main.sqlite_master WHERE type = 'table'")}
+    """'producer' or 'consumer' if every schema object is one FTDI creates, else refused."""
+    rows = db.execute('SELECT type, name, tbl_name, sql FROM main.sqlite_master').fetchall()
+    tables = {name for kind, name, _, _ in rows if kind == 'table'}
     if PRODUCER_TABLES <= tables:
-        return 'producer'
-    if 'effects' in tables:
-        return 'consumer'
-    raise ValueError('not an FTDI producer lane DB or consumer DB; refused')
+        kind, allowed = 'producer', PRODUCER_OBJECTS
+    elif 'effects' in tables:
+        kind, allowed = 'consumer', CONSUMER_OBJECTS
+    else:
+        raise ValueError('not an FTDI producer lane DB or consumer DB; refused')
+    known_tables = {name for typ, name in allowed if typ == 'table'}
+    for typ, name, table, sql in rows:
+        automatic = typ == 'index' and sql is None and name.startswith(f'sqlite_autoindex_{table}_')
+        if not (automatic and table in known_tables) and ((typ, name) not in allowed or table not in known_tables):
+            raise ValueError(f'schema object {typ} {name!r} is not an FTDI {kind} object; refused')
+        if typ == 'table' and name != 'sqlite_sequence' and not str(sql).startswith('CREATE TABLE'):
+            raise ValueError(f'table {name!r} is not a plain table; refused')
+    for name in tables:
+        if any(info[6] for info in db.execute(f'PRAGMA main.table_xinfo({_quote(name)})')):
+            raise ValueError(f'table {name!r} has hidden or generated columns; refused')
+    return kind
 
 
 def _facts(db):
@@ -111,6 +136,46 @@ def _inspect(path):
     return facts
 
 
+def _sidecar_problem(sidecar, suffix, page_size):
+    """None if ``sidecar`` is structurally a SQLite WAL / shared-memory file for this database, else a reason.
+
+    SQLite deletes or truncates these files; a foreign file at one of these names must never be touched."""
+    size = sidecar.stat().st_size
+    if size == 0:
+        return None
+    with open(sidecar, 'rb') as handle:
+        header = handle.read(96)
+    if suffix == '-wal':
+        if len(header) < 32:
+            return 'too short for a WAL header'
+        magic, version, wal_page = struct.unpack('>3I', header[:12])
+        if magic not in (0x377f0682, 0x377f0683) or version != 3007000:
+            return 'no SQLite WAL magic/version'
+        if page_size is not None and wal_page != page_size:
+            return 'WAL page size differs from the database'
+        words = struct.unpack(('>' if magic & 1 else '<') + '6I', header[:24])
+        s1 = s2 = 0
+        for i in range(0, 6, 2):
+            s1 = (s1 + words[i] + s2) & 0xFFFFFFFF
+            s2 = (s2 + words[i + 1] + s1) & 0xFFFFFFFF
+        if (s1, s2) != struct.unpack('>2I', header[24:32]):
+            return 'WAL header checksum mismatch'
+        return None
+    if size % 32768 or len(header) < 96 or header[:48] != header[48:96] \
+            or struct.unpack('<I', header[:4])[0] != 3007000:
+        return 'not a SQLite shared-memory file'
+    return None
+
+
+def _page_size(path):
+    with open(path, 'rb') as handle:
+        header = handle.read(100)
+    if len(header) < 100 or not header.startswith(b'SQLite format 3\x00'):
+        return None
+    value = struct.unpack('>H', header[16:18])[0]
+    return 65536 if value == 1 else value
+
+
 def _check_path(path):
     """Refuse links, hard links and sidecars that are not plain SQLite sidecars of this file."""
     if not path.exists() and not path.is_symlink():
@@ -123,6 +188,7 @@ def _check_path(path):
         raise ValueError('database file has several hard links; refused')
     if Path(f'{path}-journal').exists() or Path(f'{path}-journal').is_symlink():
         raise ValueError('rollback journal present: let the writing program recover it first; refused')
+    page_size = _page_size(path)
     for suffix in ('-wal', '-shm'):
         sidecar = Path(f'{path}{suffix}')
         if not sidecar.exists() and not sidecar.is_symlink():
@@ -131,11 +197,23 @@ def _check_path(path):
             raise ValueError(f'{sidecar.name} is not a regular file; refused')
         if os.stat(sidecar).st_nlink != 1 or os.path.samefile(sidecar, path):
             raise ValueError(f'{sidecar.name} is hard-linked to another file; refused')
-        if suffix == '-wal' and sidecar.stat().st_size:
-            with open(sidecar, 'rb') as handle:
-                header = handle.read(32)
-            if len(header) < 32 or header[:4] not in WAL_MAGIC:
-                raise ValueError(f'{sidecar.name} is not a SQLite WAL file; refused')
+        problem = _sidecar_problem(sidecar, suffix, page_size)
+        if problem:
+            raise ValueError(f'{sidecar.name} is not a SQLite {"WAL" if suffix == "-wal" else "shared-memory"} '
+                             f'file of this database ({problem}); refused')
+
+
+def _sidecar_identities(path):
+    """(dev, ino, nlink) of existing sidecars, to detect a file swapped in after the checks."""
+    result = {}
+    for suffix in ('-wal', '-shm'):
+        try:
+            info = os.stat(f'{path}{suffix}')
+        except FileNotFoundError:
+            result[suffix] = None
+            continue
+        result[suffix] = (info.st_dev, info.st_ino, info.st_nlink)
+    return result
 
 
 def _wal_frames(path):
@@ -162,16 +240,30 @@ def _sha256(path):
 
 
 def _copy_exclusive(source, target):
-    """Byte copy into a file this call creates (fails if the name exists); returns the target's identity."""
+    """Byte copy into a file this call creates (fails if the name exists); returns the target's identity.
+
+    If anything fails after the file was created, this call removes it again (it knows the file is its own)
+    or names it in the error."""
     digest = hashlib.sha256()
-    with open(source, 'rb') as src, open(target, 'xb') as dst:
-        identity = os.fstat(dst.fileno())
-        for chunk in iter(lambda: src.read(COPY_CHUNK), b''):
-            dst.write(chunk)
-            digest.update(chunk)
-        dst.flush()
-        os.fsync(dst.fileno())
-    return (identity.st_dev, identity.st_ino), digest.hexdigest()
+    with open(source, 'rb') as src:
+        dst = open(target, 'xb')
+        info = os.fstat(dst.fileno())
+        identity = (info.st_dev, info.st_ino)
+        try:
+            with dst:
+                for chunk in iter(lambda: src.read(COPY_CHUNK), b''):
+                    dst.write(chunk)
+                    digest.update(chunk)
+                dst.flush()
+                os.fsync(dst.fileno())
+        except BaseException as exc:
+            try:
+                _remove_own(target, identity)
+            except OSError as again:
+                raise ValueError(f'copying failed ({exc}); the incomplete copy {target} could not be removed '
+                                 f'({again}); it is NOT a valid backup') from exc
+            raise
+    return identity, digest.hexdigest()
 
 
 def _remove_own(path, identity):
@@ -216,19 +308,28 @@ def _apply(path, given):
     bytes_before = path.stat().st_size
     identity = None
     vacuumed = False
+    sidecars = _sidecar_identities(path)
     try:
         db = sqlite3.connect(str(path), timeout=1, isolation_level=None)
     except sqlite3.DatabaseError as exc:
         raise ValueError(f'not a readable SQLite database ({exc}); refused') from None
     try:
         try:
-            # Exclusive for the whole operation: fails if any other connection (any process) has the DB open.
+            # Exclusive for the whole operation: refused if another connection is reading or writing, and nobody
+            # else can open a read or write transaction until this run ends.
             db.execute('PRAGMA locking_mode=EXCLUSIVE')
             db.execute('BEGIN EXCLUSIVE')
         except sqlite3.OperationalError as exc:
-            raise ValueError(f'database in use: another connection has it open ({exc}); refused') from None
+            raise ValueError(f'database in use: another connection holds a lock ({exc}); refused') from None
         except sqlite3.DatabaseError as exc:
             raise ValueError(f'not a readable SQLite database ({exc}); refused') from None
+        # The checks ran before the open; repeat them under the lock (no SQLite writer can interfere any more)
+        # and require that no sidecar was swapped in meanwhile. A file created at a sidecar name after the
+        # first check is refused before SQLite writes to it (the checkpoint below is the first write).
+        _check_path(path)
+        if any(old is not None and old != new for old, new in zip(sidecars.values(),
+                                                                    _sidecar_identities(path).values())):
+            raise ValueError('a sidecar file was replaced during the run; refused')
         try:
             kind = _kind(db)
             facts = _facts(db)
@@ -248,7 +349,11 @@ def _apply(path, given):
             raise ValueError(f'not enough free space: need {needed} bytes in {path.parent} and {needed_temp} for '
                              f'SQLite temporary files in {temp_dir}; refused')
         # Verified backup before the first change of the original.
-        identity, copied = _copy_exclusive(path, kept)
+        try:
+            identity, copied = _copy_exclusive(path, kept)
+        except FileExistsError:
+            raise ValueError(f'name collision: {kept.name} appeared during the run (not created by FTDI, left '
+                             'untouched); refused') from None
         if not copied == _sha256(path) == _sha256(kept):   # re-read the copy from disk
             raise ValueError('backup copy differs from the database file; refused')
         backup = _inspect(kept)
@@ -269,17 +374,20 @@ def _apply(path, given):
                 raise ValueError(f'{key} changed by VACUUM')
         if after != before:
             raise ValueError('logical content changed by VACUUM')
+        db.close()
+        bytes_after = os.path.getsize(path)
     except BaseException as exc:
         if not vacuumed:
             db.close()
             _remove_own(kept, identity)   # only our own copy; the original was not changed
+            if identity is not None and kept.exists() and isinstance(exc, Exception):
+                raise ValueError(f'{exc} (the copy at {kept} could not be removed; it is NOT a valid backup)') from exc
             raise
         db.close()
         raise ValueError(f'{exc} -- the verified backup of the original is kept at {kept}; the database at {path} '
                          'is a consistent SQLite file (VACUUM is transactional); audit it before further use') from exc
-    db.close()
     return {'status': 'VACUUMED', 'kind': kind, 'db': given, 'bytes_before': bytes_before,
-            'bytes_after': path.stat().st_size, 'logical_digest': before, 'kept_original': str(kept),
+            'bytes_after': bytes_after, 'logical_digest': before, 'kept_original': str(kept),
             'changed': True,
             'note': 'the kept original is a verified copy made before the rebuild; FTDI never deletes it. Remove '
                     'it yourself once you have verified the result (e.g. with audit-e2e-archive)'}

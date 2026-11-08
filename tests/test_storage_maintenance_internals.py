@@ -66,6 +66,18 @@ class LogicalDigestTests(unittest.TestCase):
         moved_b = self.db(statements, [('z', ('TABLE', 'z', 3))])
         self.assertNotEqual(digest_of(moved_a), digest_of(moved_b))
 
+    def test_w3_stored_generated_values_are_part_of_the_digest(self):
+        paths = []
+        for number, override in enumerate((False, True)):
+            path = self.base / f'gen{number}.db'
+            with closing(sqlite3.connect(path)) as db, db:
+                if override:   # same schema, different stored value (a function shadowing a built-in at write time)
+                    db.create_function('abs', 1, lambda value: 22, deterministic=True)
+                db.execute('CREATE TABLE t(a, g AS (abs(a)) STORED)')
+                db.execute('INSERT INTO t(a) VALUES (-7)')
+            paths.append(path)
+        self.assertNotEqual(digest_of(paths[0]), digest_of(paths[1]))
+
     def test_sensitive_to_values_types_and_schema(self):
         table = 'CREATE TABLE effects(event_id TEXT PRIMARY KEY, payload BLOB, n)'
         base = digest_of(self.db([table], [('effects', ('a', b'x', 1.0))]))
@@ -123,7 +135,7 @@ class VacuumInternalsTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.f.consumers.iterdir()),
                          sorted(['effects.sqlite3', 'effects.sqlite3.archive', Path(done['kept_original']).name]))
 
-    def test_any_other_open_connection_refuses(self):
+    def test_connection_that_has_read_in_wal_mode_refuses(self):
         idle = sqlite3.connect(self.f.consumer)
         try:
             idle.execute('SELECT 1 FROM effects LIMIT 1').fetchall()   # idle, no transaction
@@ -252,11 +264,103 @@ class VacuumInternalsTests(unittest.TestCase):
                 Path(target).write_bytes(b'appeared meanwhile')
                 return real(source, target)
             with mock.patch.object(sm, '_copy_exclusive', late):
-                with self.assertRaises(FileExistsError):
+                with self.assertRaisesRegex(ValueError, 'appeared during the run'):
                     vacuum_db(self.f.consumer, apply=True)
         self.assertEqual(kept.read_bytes(), b'appeared meanwhile')
         kept.unlink()
         self.assert_untouched()
+
+    def test_w2_objects_ftdi_does_not_create_are_refused(self):
+        statements = {
+            'fts': "CREATE VIRTUAL TABLE search USING fts5(body, content='effects', content_rowid='rowid')",
+            'view': 'CREATE VIEW v AS SELECT * FROM effects',
+            'foreign table': 'CREATE TABLE notes(x)',
+            'foreign index': 'CREATE INDEX extra ON effects(seq)',
+            'generated column': 'ALTER TABLE effects ADD COLUMN g AS (seq * 2) VIRTUAL',
+        }
+        for label, statement in statements.items():
+            with self.subTest(label=label):
+                f = Fixture(tempfile.mkdtemp(prefix='w2_', dir=self.f.base))
+                f.ingest(4)
+                f.deliver()
+                try:
+                    sql(f.consumer, statement)
+                except sqlite3.OperationalError as exc:
+                    if 'fts5' in str(exc):
+                        continue   # this SQLite build has no FTS5
+                    raise
+                raw = f.consumer.read_bytes()
+                for apply in (False, True):
+                    with self.assertRaisesRegex(ValueError, 'not an FTDI consumer object|hidden or generated|not a plain'):
+                        vacuum_db(f.consumer, apply=apply)
+                self.assertEqual(f.consumer.read_bytes(), raw)
+                self.assertEqual([p for p in f.consumers.iterdir() if '.pre-vacuum-' in p.name], [])
+
+    def test_w4_failed_copy_removes_its_own_partial_file(self):
+        with mock.patch.object(sm.os, 'fsync', side_effect=OSError('simulated fsync failure')):
+            with self.assertRaisesRegex(OSError, 'simulated fsync failure'):
+                vacuum_db(self.f.consumer, apply=True)
+        self.assert_untouched()
+
+    def test_w1_foreign_sidecars_with_a_plausible_header_are_left_alone(self):
+        foreign = {
+            '-wal': b'\x37\x7f\x06\x82' + b'\x00' * 60 + b'precious data that merely starts like a WAL',
+            '-shm': b'not shared memory' * 4000,
+        }
+        for suffix, data in foreign.items():
+            with self.subTest(suffix=suffix):
+                sidecar = Path(f'{self.f.consumer}{suffix}')
+                sidecar.write_bytes(data)
+                try:
+                    for apply in (False, True):
+                        with self.assertRaisesRegex(ValueError, 'is not a SQLite'):
+                            vacuum_db(self.f.consumer, apply=apply)
+                    self.assertEqual(sidecar.read_bytes(), data)
+                finally:
+                    sidecar.unlink()
+                self.assert_untouched()
+
+    def test_w1_sidecar_linked_between_the_check_and_the_open_is_refused(self):
+        sql(self.f.consumer, 'PRAGMA wal_checkpoint(TRUNCATE)')
+        Path(f'{self.f.consumer}-wal').unlink(missing_ok=True)   # no -wal yet: the race creates it
+        Path(f'{self.f.consumer}-shm').unlink(missing_ok=True)
+        raw = self.f.consumer.read_bytes()
+        unrelated = self.f.consumers / 'unrelated.bin'
+        unrelated.write_bytes(b'precious' * 4000)
+        real = sm._sidecar_identities
+
+        def link_after_check(path):   # runs after the first _check_path, before SQLite opens the database
+            result = real(path)
+            os.link(unrelated, f'{path}-wal')
+            return result
+        try:
+            with mock.patch.object(sm, '_sidecar_identities', link_after_check):
+                with self.assertRaisesRegex(ValueError, 'hard-linked|replaced during the run'):
+                    vacuum_db(self.f.consumer, apply=True)
+            self.assertEqual(unrelated.read_bytes(), b'precious' * 4000)
+            self.assertEqual(self.f.consumer.read_bytes(), raw)
+            self.assertEqual(self.kept(), [])
+        finally:
+            Path(f'{self.f.consumer}-wal').unlink(missing_ok=True)
+            unrelated.unlink()
+
+    def test_w6_failure_after_vacuum_while_reading_the_size_names_the_backup(self):
+        with mock.patch.object(sm.os.path, 'getsize', side_effect=OSError('simulated stat failure')):
+            with self.assertRaisesRegex(ValueError, r'simulated stat failure.*verified backup .*pre-vacuum-'):
+                vacuum_db(self.f.consumer, apply=True)
+        self.assertEqual(len(self.kept()), 1)
+        self.assertEqual(digest_of(self.f.consumer), self.digest)
+
+    def test_w5_idle_connection_without_a_lock_is_documented_not_refused(self):
+        # A connection that holds no SQLite lock is indistinguishable from none. The guarantee is that it
+        # cannot change anything while vacuum-db runs, and sees identical logical content afterwards.
+        idle = sqlite3.connect(self.f.consumer)
+        try:
+            done = vacuum_db(self.f.consumer, apply=True)
+            self.assertEqual(done['status'], 'VACUUMED')
+            self.assertEqual(logical_digest(idle), self.digest)
+        finally:
+            idle.close()
 
     def test_insufficient_space_is_refused_before_any_change(self):
         usage = mock.Mock(return_value=mock.Mock(free=1024))
