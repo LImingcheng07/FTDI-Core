@@ -131,5 +131,6 @@ latency = analyze_session(s1)
 summary['latency_session_1'] = {k: latency[k] for k in ('status', 'samples', 'trusted', 'tag_counts',
                                                         'latency_percentiles', 'events_recovered_by_rest_only')}
 check('latency evidence follows ADR-008 (never certified)', latency['certified'] is False and
-      latency['status'] in ('ESTIMATED', 'INCONCLUSIVE', 'NO_CLOCK_MODEL'), summary['latency_session_1'])
+      latency['status'] in ('ESTIMATED', 'INCONCLUSIVE', 'NO_CLOCK_MODEL', 'NO_TRUSTED_SAMPLES'),
+      summary['latency_session_1'])
 finish(True)

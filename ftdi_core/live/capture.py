@@ -10,12 +10,19 @@ from pathlib import Path
 
 from .. import __version__
 from .endpoints import resolve
+from .clocks import INTERVAL_CLOCK, WALL_CLOCK, wall_time_ns
 from .limits import CaptureLimits
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
 from .rest import RateLimited, RestClient, UnusableBody
 from .session import (START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
                       parse_raw, previous_link, raw_rest_record, raw_ws_record, utc_iso, write_new_json)
 from .wsclient import ConnectionClosed, WebSocket, WebSocketError
+
+
+def _read_stamps():
+    """(interval stamp, wall stamp) of a read that just returned: the interval clock first, then the precise wall
+    clock (``clocks.wall_time_ns``; ``time.time_ns`` is quantised to system-timer ticks on Windows)."""
+    return time.perf_counter_ns(), wall_time_ns()
 
 
 class _Stop(Exception):
@@ -37,7 +44,7 @@ def _reader(ws, items, overflow, stop, conn, spill):
         except Exception as exc:  # pragma: no cover - defensive: surface any reader failure
             item = ('protocol', conn, f'{type(exc).__name__}: {exc}')
         else:
-            wall, perf = time.time_ns(), time.perf_counter_ns()
+            perf, wall = _read_stamps()
             depth = items.qsize()
             try:
                 items.put_nowait(('msg', conn, text, wall, perf, depth))
@@ -409,7 +416,8 @@ def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_n
         'schema': START_SCHEMA, 'symbol': symbol, 'lane': lane(symbol), 'started_utc': started_utc,
         'software_version': __version__,
         'endpoints': {'ws': endpoints.ws.base, 'rest': endpoints.rest.base}, 'public_network': endpoints.public,
-        'limits': asdict(limits), 'max_events': max_events, 'max_seconds': max_seconds, 'previous': link})
+        'limits': asdict(limits), 'max_events': max_events, 'max_seconds': max_seconds, 'previous': link,
+        'clocks': {'wall': WALL_CLOCK, 'interval': INTERVAL_CLOCK}})
     capture = _Capture(directory, symbol=symbol, endpoints=endpoints, limits=limits, max_events=max_events,
                        max_seconds=max_seconds, previous=(link, previous))
     capture.started_utc = started_utc

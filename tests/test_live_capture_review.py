@@ -343,7 +343,7 @@ class LiveReviewRegressions(unittest.TestCase):
                 mock.patch.object(compose_module, '_write_events', write_then_restore):
             compose_module.compose_sessions([path], self.base / 'chain')
         self.assertEqual((self.base / 'chain' / 'events.jsonl').read_bytes(), original)
-        self.assertEqual(sorted(p.name for p in (self.base / 'chain').iterdir()), ['CHAIN_MANIFEST.json', 'events.jsonl'])
+        self.assertEqual(sorted(p.name for p in (self.base / 'chain').iterdir()), ['CHAIN_MANIFEST.json', 'events.jsonl', 'source_manifest.json'])
 
     def test_n2_loopback_port_80_sessions_verify(self):
         from ftdi_core.live.session import options_problem

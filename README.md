@@ -1,21 +1,22 @@
-# FTDI-Core v0.4.0 — auditable local market-data delivery
+# FTDI-Core v0.4.1 — auditable local market-data delivery
 
 **Status:** local research prototype; **not** production certified and **not** a trading program. No API keys,
-no account or trading operations, no outbound network (localhost HTTP only). Python 3.10+, standard library only.
+no account or trading operations; delivery over localhost HTTP only; the only outbound connections are the
+read-only public market-data hosts of `live-capture --public-network`. Python 3.10+, standard library only.
 
 **Chinese user guide (中文使用手册): [`docs/USER_GUIDE_zh.md`](docs/USER_GUIDE_zh.md)** · Release notes:
-[`RELEASE_NOTES_v0.4.0.md`](RELEASE_NOTES_v0.4.0.md) (earlier: `RELEASE_NOTES_v0.3.1.md`, `RELEASE_NOTES_v0.3.0.md`) · Gates and evidence: [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
+[`RELEASE_NOTES_v0.4.1.md`](RELEASE_NOTES_v0.4.1.md) (earlier: `RELEASE_NOTES_v0.4.0.md`, `RELEASE_NOTES_v0.3.1.md`, `RELEASE_NOTES_v0.3.0.md`) · Gates and evidence: [`docs/RELEASE_GATES_V04.md`](docs/RELEASE_GATES_V04.md), [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
 
 FTDI-Core turns a verified historical Binance aggTrades ZIP into an immutable event stream, persists it per lane
 with transactional checkpoints, delivers it at-least-once to an **independent consumer process** that commits
 before acknowledging, and proves per event — not by counts — that nothing was lost, duplicated or altered, even
 after both sides have archived or compacted their history.
 
-## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.4.0` folder)
+## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.4.1` folder)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 409 Core + 45 frozen S07 tests + CLI smoke
-python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.4.0.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 416 Core + 45 frozen S07 tests + CLI smoke
+python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.4.1.json
 ```
 
 ## Typical run
@@ -73,6 +74,9 @@ precondition error (`FTDI_CORE_FAIL_CLOSED: ...` on stderr).
   (`examples/V031_ACCEPTANCE_EVIDENCE.json`, v0.3.0: `examples/V030_ACCEPTANCE_EVIDENCE.json`; `docs/RELEASE_GATES_V03.md`).
 * Archive-aware audit of 500,000 archived + 54,441 resident events: COMPLETE (`docs/REAL_ARCHIVE_AUDIT_RESULTS.md`).
 * Consumer retention: 397 MiB → 61 MiB after VACUUM (on a copy) + 51 MiB verified archive (`docs/REAL_CONSUMER_RETENTION_RESULTS.md`).
+* Real-network pilot of the live capture (owner-approved, 2 chained BTCUSDT sessions, 2,480 events, 196 recovered
+  by REST): verified, composed, delivered and audited **COMPLETE**; no latency figure (clock evidence too weak; fixed
+  in v0.4.1) — `docs/REAL_LIVE_PILOT_RESULTS.md`.
 
 All timings are local process times, **not** exchange-to-user latency. Source market data are not included.
 
@@ -89,7 +93,7 @@ All timings are local process times, **not** exchange-to-user latency. Source ma
 ## Not proven
 
 Authenticated or cross-host delivery; exactly-once for side effects outside the consumer DB; sustained live
-operation (the v0.4 collector is tested against a simulated venue on 127.0.0.1; a real-network pilot is the
-owner's decision), trusted latency or P99; 24-hour uptime; power-loss, backup/restore; signatures or WORM storage for
+operation (one owner-approved 12-minute real-network pilot so far; otherwise tested against a simulated venue
+on 127.0.0.1), trusted latency or P99; 24-hour uptime; power-loss, backup/restore; signatures or WORM storage for
 evidence; L2/L3 book reconstruction. `COMPLETE` covers the supplied local evidence for the observed range, not
 venue completeness before the first sequence. Strong audits assume a quiescent maintenance window.

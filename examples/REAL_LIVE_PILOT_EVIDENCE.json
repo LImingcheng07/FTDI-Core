@@ -121,5 +121,52 @@
     "max_abs_disagreement_ms": 8.8,
     "whole_session_wall_minus_perf_ms": 0.87
   },
-  "windows_time": "w32tm /query /status: Leap indicator 3 (not synchronised), root dispersion 9.18 s, source ntp.aliyun.com"
+  "windows_time": "w32tm /query /status: Leap indicator 3 (not synchronised), root dispersion 9.18 s, source ntp.aliyun.com",
+  "reanalysis_v041": {
+    "note": "The same two sessions re-analysed read-only with the v0.4.1 rules (lasting-shift WALL_CLOCK_STEP, READ_STAMP_OUTLIER, NO_TRUSTED_SAMPLES, session wall-clock resolution 15.625 ms assumed for v0.4.0 sessions). The \"latency\" entry above is the v0.4.0 analysis as run on the pilot day.",
+    "sessions": {
+      "session-20261108T144814Z": {
+        "status": "NO_TRUSTED_SAMPLES",
+        "samples": 1838,
+        "trusted": 0,
+        "tag_counts": {
+          "OFFSET_UNCERTAIN": 1838,
+          "QUEUED_READ": 533,
+          "READ_STAMP_OUTLIER": 88
+        },
+        "latency_percentiles": {
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "events_recovered_by_rest_only": 0,
+        "session_wall_clock": {
+          "implementation": "time.time_ns (GetSystemTimeAsFileTime, assumed for a v0.4.0 session)",
+          "resolution_ms": 15.625
+        },
+        "certified": false
+      },
+      "session-20261108T145922Z": {
+        "status": "NO_TRUSTED_SAMPLES",
+        "samples": 446,
+        "trusted": 0,
+        "tag_counts": {
+          "OFFSET_UNCERTAIN": 446,
+          "QUEUED_READ": 173,
+          "READ_STAMP_OUTLIER": 12
+        },
+        "latency_percentiles": {
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "events_recovered_by_rest_only": 196,
+        "session_wall_clock": {
+          "implementation": "time.time_ns (GetSystemTimeAsFileTime, assumed for a v0.4.0 session)",
+          "resolution_ms": 15.625
+        },
+        "certified": false
+      }
+    }
+  }
 }

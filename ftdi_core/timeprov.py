@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 import math
+import statistics
 import time
 from pathlib import Path
 
@@ -28,7 +29,7 @@ ASSUMPTIONS = [
     'Samples carrying any exclusion tag are never included in percentiles.',
 ]
 EXCLUDING_TAGS = frozenset({'CLOCK_UNCORRECTED', 'OFFSET_STALE', 'OFFSET_UNCERTAIN', 'NEGATIVE_BEYOND_UNCERTAINTY',
-                            'WALL_CLOCK_STEP', 'QUEUED_READ', 'QUEUE_DEPTH_UNKNOWN'})
+                            'WALL_CLOCK_STEP', 'READ_STAMP_OUTLIER', 'QUEUED_READ', 'QUEUE_DEPTH_UNKNOWN'})
 
 
 @dataclass(frozen=True)
@@ -129,17 +130,17 @@ def classify_events(events, estimate, policy=TimePolicy()):
     ``estimate`` is one OffsetEstimate (or None) for all events, or a callable ``event -> OffsetEstimate | None``
     (e.g. the nearest minimum-RTT sample of a long capture)."""
     estimate_for = estimate if callable(estimate) else (lambda event: estimate)
-    evidences, stepped, previous = [], False, None
-    for event in events:
+    events = list(events)
+    step_at, outliers = _stamp_levels(events, policy)
+    evidences = []
+    for index, event in enumerate(events):
         estimate = estimate_for(event)
         tags = []
         raw = (event.read_wall_ns - event.venue_event_ms * 1_000_000) / 1e6
-        if previous is not None and event.read_perf_ns is not None and previous.read_perf_ns is not None:
-            disagreement = abs((event.read_wall_ns - previous.read_wall_ns) - (event.read_perf_ns - previous.read_perf_ns)) / 1e6
-            if disagreement > policy.wall_step_tolerance_ms:
-                stepped = True
-        if stepped:
+        if step_at is not None and index >= step_at:
             tags.append('WALL_CLOCK_STEP')
+        elif index in outliers:
+            tags.append('READ_STAMP_OUTLIER')
         if event.queue_depth_at_read is None:
             tags.append('QUEUE_DEPTH_UNKNOWN')
         elif event.queue_depth_at_read > 0:
@@ -158,8 +159,38 @@ def classify_events(events, estimate, policy=TimePolicy()):
                 tags.append('NEGATIVE_BEYOND_UNCERTAINTY')
         trusted = latency is not None and not (EXCLUDING_TAGS & set(tags))
         evidences.append(LatencyEvidence(raw, latency, uncertainty, tuple(tags), trusted))
-        previous = event
     return evidences
+
+
+STEP_CONFIRM = 20   # a wall-clock step must dominate this many following reads (jitter and short runs revert)
+
+
+def _stamp_levels(events, policy):
+    """(index of the first wall-clock step or None, indices of outlying reads before it).
+
+    A read *deviates* when its wall-minus-interval level departs from the median level of the preceding
+    STEP_CONFIRM reads by more than the tolerance. It starts a step when the median level of this and the next
+    STEP_CONFIRM reads (at least two reads) departs as well: a lasting shift, as a clock correction is. Otherwise
+    the read is an outlier: its wall stamp disagrees with its neighbours by more than the tolerance (jitter, a
+    short run of quantised stamps as in the 2026-11-08 pilot), so that read alone is excluded. Slow drift moves the
+    level by much less than the tolerance between neighbouring windows."""
+    tolerance_ns = policy.wall_step_tolerance_ms * 1e6
+    levels = [None if e.read_perf_ns is None else e.read_wall_ns - e.read_perf_ns for e in events]
+    outliers = set()
+    for i in range(1, len(levels)):
+        if levels[i] is None:
+            continue
+        before = [v for v in levels[max(0, i - STEP_CONFIRM):i] if v is not None]
+        if not before:
+            continue
+        reference = statistics.median(before)
+        if abs(levels[i] - reference) <= tolerance_ns:
+            continue
+        after = [v for v in levels[i:i + STEP_CONFIRM + 1] if v is not None]
+        if len(after) >= 2 and abs(statistics.median(after) - reference) > tolerance_ns:
+            return i, outliers
+        outliers.add(i)
+    return None, outliers
 
 
 def nearest_rank(values, p):
@@ -181,6 +212,8 @@ def percentile_report(evidences, policy=TimePolicy()):
         status = 'NO_CLOCK_MODEL'
     elif negative / len(corrected) > policy.inconclusive_negative_fraction:
         status = 'INCONCLUSIVE'
+    elif not trusted:
+        status = 'NO_TRUSTED_SAMPLES'
     else:
         status = 'ESTIMATED'
     percentiles = {}

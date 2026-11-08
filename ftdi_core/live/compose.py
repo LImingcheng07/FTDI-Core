@@ -96,6 +96,17 @@ def _compose(originals, output):
                 'last_seq': nonempty[-1]['last_seq'], 'event_count': count,
                 'chain_head': {'session_id': entries[0]['session_id'], 'previous': entries[0]['previous']},
                 'sessions': entries, 'files': {'events.jsonl': facts}}
+    # The same source-manifest schema `prepare` writes for historical files, so the archive-aware audit can
+    # check the replay source's declared hash, record count and sequence range.
+    write_new_json(output / 'source_manifest.json', {
+        'schema': 'FTDI-Core-SourceManifest-v1', 'normalization_version': 'FTDI-Live-Session-v1',
+        'eighth_csv_boolean_preserved': True, 'source_kind': 'LIVE_SESSION_CHAIN', 'archive_name': None,
+        'archive_sha256': None, 'independent_checksum_provided': False, 'archive_member': None,
+        'records': count, 'record_limit': 0, 'source_seq_first': manifest['first_seq'],
+        'source_seq_last': manifest['last_seq'], 'source_seq_gaps': 0, 'contiguous_in_file': True,
+        'jsonl_filename': 'events.jsonl', 'jsonl_sha256': facts['sha256'], 'canonical_events_sha256': facts['sha256'],
+        'chain_manifest': 'CHAIN_MANIFEST.json',
+        'timestamp_note': 'Event time is exchange-provided; read times and clock evidence are in the sessions.'})
     write_new_json(output / 'CHAIN_MANIFEST.json', manifest)
     return manifest
 

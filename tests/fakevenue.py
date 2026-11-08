@@ -39,6 +39,13 @@ import threading
 import time
 import urllib.parse
 
+from ftdi_core.live.clocks import wall_time_ns
+
+
+def venue_now_ms():
+    """The simulated venue's clock: precise (a real venue's server clock is not quantised to Windows timer ticks)."""
+    return wall_time_ns() // 1_000_000
+
 GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 BASE_MS = 1717200000000
 
@@ -167,7 +174,7 @@ class _Connection:
                     self.send(_frame(0x1, _compact(trade(seq, self.venue.symbol)).encode()))
             elif kind == 'trade_now':
                 record = trade(action[1], self.venue.symbol)
-                record['E'] = int(time.time() * 1000) + self.venue.server_offset_ms
+                record['E'] = venue_now_ms() + self.venue.server_offset_ms
                 self.send(_frame(0x1, _compact(record).encode()))
             elif kind == 'trade_with':
                 record = trade(action[1], self.venue.symbol)
@@ -289,7 +296,7 @@ class FakeVenue:
                 query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
                 venue.requests.append((parsed.path, query))
                 if parsed.path == '/api/v3/time':
-                    return self._send(200, _compact({'serverTime': int(time.time() * 1000) + venue.server_offset_ms}))
+                    return self._send(200, _compact({'serverTime': venue_now_ms() + venue.server_offset_ms}))
                 if parsed.path != '/api/v3/aggTrades':
                     return self._send(404, '{"code":-1}')
                 if venue.rest_queue:

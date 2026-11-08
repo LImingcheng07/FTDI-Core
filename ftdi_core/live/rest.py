@@ -9,6 +9,8 @@ import threading
 import time
 import urllib.parse
 
+from .clocks import wall_time_ns
+
 
 class RateLimited(Exception):
     def __init__(self, status, retry_after):
@@ -70,9 +72,9 @@ class RestClient:
         budget = self.timeout_s if budget_s is None else max(0.05, min(self.timeout_s, budget_s))
         target = path + '?' + urllib.parse.urlencode(query) if query else path
         url = self.endpoint.base + target
-        t0_wall, t0_perf = time.time_ns(), time.perf_counter_ns()
         self._last = time.perf_counter()
         status = body = body_base64 = error = retry_after = None
+        t0_wall = t0_perf = None
         if self.endpoint.scheme == 'https':
             conn = _HTTPS(self.endpoint.host, self.endpoint.port, timeout=budget, context=ssl.create_default_context())
         else:
@@ -81,6 +83,8 @@ class RestClient:
         timer.daemon = True
         timer.start()
         try:
+            conn.connect()   # TCP (+TLS) first: the stamps below bracket only the request and its answer
+            t0_wall, t0_perf = wall_time_ns(), time.perf_counter_ns()
             conn.request('GET', target, headers={'Accept': 'application/json', 'Connection': 'close',
                                                  'User-Agent': 'FTDI-Core-readonly'})
             response = conn.getresponse()
@@ -105,7 +109,9 @@ class RestClient:
         finally:
             timer.cancel()
             conn.close()
-        t1_wall, t1_perf = time.time_ns(), time.perf_counter_ns()
+        t1_wall, t1_perf = wall_time_ns(), time.perf_counter_ns()
+        if t0_wall is None:   # the connection itself failed: the attempt spans the whole call
+            t0_wall, t0_perf = t1_wall, t1_perf
         self.recorder({'kind': kind, 'url': url, 'status': status, 't0_wall_ns': t0_wall, 't0_perf_ns': t0_perf,
                        't1_wall_ns': t1_wall, 't1_perf_ns': t1_perf, 'body': body, 'body_base64': body_base64,
                        'error': error})

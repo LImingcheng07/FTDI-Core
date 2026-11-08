@@ -1,4 +1,4 @@
-# FTDI-Core v0.4.0 使用手册
+# FTDI-Core v0.4.1 使用手册
 
 > 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
 > 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
@@ -10,14 +10,14 @@
 
 - Windows 10/11，Python **3.10+**（只用标准库，无需安装任何依赖包）。
 - **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
-- 解压发布包 `FTDI-Core-v0.4.0-windows.zip`，在解压出的 `FTDI-Core-v0.4.0` 目录里打开 PowerShell。
+- 解压发布包 `FTDI-Core-v0.4.1-windows.zip`，在解压出的 `FTDI-Core-v0.4.1` 目录里打开 PowerShell。
 
 一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
-python -m ftdi_core --version                  # ftdi-core 0.4.0
+python -m ftdi_core --version                  # ftdi-core 0.4.1
 ```
 
 ## 2. 一条完整的数据链路
@@ -144,7 +144,7 @@ python scripts\acceptance_full_day.py --archive D:\data\BTCUSDT-aggTrades-2024-0
 最后打印 `ACCEPTANCE PASS`，证据保存在 `C:\ftdi_acceptance\acceptance_evidence.json`。
 全天数据在固态硬盘上约 25 分钟，占用约 4 GB；输入的 ZIP 只读，跑前跑后会核对哈希。跑完后可以删除 workdir。
 
-## 6. 实时只读采集（Task 004，v0.4.0）
+## 6. 实时只读采集（Task 004，v0.4.0 起；v0.4.1 修正时钟证据）
 
 把交易所公开的实时成交（aggTrade）采成一个个**封存的时段**，再交给上面同一条链路回放、投递、审计。
 **不需要也不接受任何密钥，只读，不下单。**
@@ -170,6 +170,12 @@ python -m ftdi_core analyze-clock-evidence --session <段目录>
 - 链变长后：从链头重新拼接到一个**新**目录、回放到一个**新**运行目录，投递给同一个消费端——已有事件只记重复。
 - 退出码：0 正常结束（达到条数/时长/Ctrl-C），2 因缺口、冲突、格式错误、限流等提前结束（已封存），3 前置条件失败。
 - **连接公网是您的决定**：本程序只访问 `data-stream.binance.vision` 与 `data-api.binance.vision` 两个公开行情地址。
+- 时延报告的状态：`ESTIMATED`（有可信样本，给出带不确定度的估计）、`NO_TRUSTED_SAMPLES`（能校正但没有一个样本可信，
+  例如时钟样本往返太慢）、`NO_CLOCK_MODEL`（没有时钟样本）、`INCONCLUSIVE`（负值过多，时钟模型不对）。
+  想得到可信的时延数字，采集前先同步 Windows 时钟（管理员 PowerShell：`w32tm /resync`，再用
+  `w32tm /query /status` 确认不是"Leap 指示器: 3"）。
+- 2026-11-08 的真实网络试采（v0.4.0）：采集、验证、拼接、投递、审计全部通过（2,480 条，审计 COMPLETE），
+  但没有时延数字；原因和 v0.4.1 的修正见 `docs/REAL_LIVE_PILOT_RESULTS.md`。
 
 ## 7. 时钟证据分析（Task 003）
 
@@ -213,8 +219,9 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 
 | 文档 | 内容 |
 |---|---|
-| `RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
-| `docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
+| `RELEASE_NOTES_v0.4.1.md`、`RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
+| `docs/RELEASE_GATES_V04.md`、`docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
+| `docs/LIVE_CAPTURE.md` / `docs/REAL_LIVE_PILOT_RESULTS.md` | 实时采集契约 / 真实网络试采结果 |
 | `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |
 | `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |
 | `docs/TASK003_TIME_PROVENANCE_DESIGN.md` | 时间溯源规则 |

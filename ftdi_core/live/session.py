@@ -40,6 +40,7 @@ MANIFEST_KEYS = frozenset({'schema', 'session_id', 'symbol', 'lane', 'software_v
                            'capture_start_sha256', 'interpreted'})
 START_KEYS = frozenset({'schema', 'symbol', 'lane', 'started_utc', 'software_version', 'endpoints', 'public_network',
                         'limits', 'max_events', 'max_seconds', 'previous'})
+START_OPTIONAL = frozenset({'clocks'})   # since v0.4.1: the wall and interval clocks the capture used
 
 
 def utc_compact():
@@ -348,10 +349,20 @@ def options_problem(endpoints, public_network, limits):
     return limits_problem(limits, public_network)
 
 
+def _clocks_ok(clocks):
+    return (isinstance(clocks, dict) and set(clocks) == {'wall', 'interval'}
+            and all(isinstance(c, dict) and set(c) == {'implementation', 'resolution_ns'}
+                    and isinstance(c['implementation'], str) and type(c['resolution_ns']) is int
+                    and c['resolution_ns'] >= 1 for c in clocks.values()))
+
+
 def start_problem(start, m=None):
     """CAPTURE_START.json must be well formed and describe the same capture as the manifest."""
-    if not isinstance(start, dict) or set(start) != START_KEYS or start['schema'] != START_SCHEMA:
+    if not isinstance(start, dict) or not START_KEYS <= set(start) <= START_KEYS | START_OPTIONAL \
+            or start['schema'] != START_SCHEMA:
         return 'fields or schema'
+    if 'clocks' in start and not _clocks_ok(start['clocks']):
+        return 'clocks'
     try:
         check_symbol(start['symbol'])
     except ValueError:

@@ -44,8 +44,10 @@ values is counted as `text_variants`. Any other difference is a **conflict**.
 `capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_network=False, max_events=10000,
 max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
 
-* A reader thread receives WebSocket messages and, immediately after each read, records `read_wall_ns`
-  (`time.time_ns()`), `read_perf_ns` (`time.perf_counter_ns()`) and `queue_depth` (messages already waiting in
+* A reader thread receives WebSocket messages and, immediately after each read, records `read_perf_ns`
+  (`time.perf_counter_ns()`), `read_wall_ns` (the precise wall clock: `GetSystemTimePreciseAsFileTime()` on Windows,
+  `time.time_ns()` elsewhere — CPython before 3.13 implements `time.time_ns()` on Windows with the coarse
+  `GetSystemTimeAsFileTime()`) and `queue_depth` (messages already waiting in
   the bounded queue) and enqueues the message. A full queue stops the capture (`READER_OVERFLOW`); messages are
   never dropped (the one that did not fit is kept). The writer (calling thread) does all validation and
   persistence. When the capture stops, every message already received but not yet interpreted (still queued, or
@@ -74,7 +76,9 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   resulting gap is repaired by the rule above; after every reconnect one deferred REST catch-up request
   `fromId=expected` is made by the same rule as at the start (an empty answer just means nothing new). Each
   connection has an id (`conn`, from 1). A message split into more than 1024 frames → `FORMAT_ERROR`.
-* Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end (budget 2 s);
+* Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end (budget 2 s); the
+  stamps `t0`/`t1` bracket only the request and its answer on an already established connection (TCP and TLS set-up
+  excluded) and use the same precise wall clock;
   failures (transport errors, non-200, a body without an integer `serverTime`) are recorded and do not stop the
   capture.
 * Deadlines: every WebSocket handshake completes within `ws_read_timeout_s` and before the capture deadline;
@@ -115,7 +119,7 @@ exists). While capturing, files carry the suffix `.part`; sealing renames them. 
 | `raw_ws.jsonl` | WebSocket text message as received | `conn`, `n` (0-based, session-wide), `read_wall_ns`, `read_perf_ns`, `queue_depth`, `text` |
 | `raw_rest.jsonl` | REST response | `n`, `kind` (`aggTrades`/`time`), `url`, `status`, `t0_wall_ns`, `t0_perf_ns`, `t1_wall_ns`, `t1_perf_ns`, `body` (text, or `null` on transport error or unusable body), `body_base64` (received bytes when the body is too large or not UTF-8, else `null`), `error` (string or `null`) |
 | `clock.jsonl` | successful time sample | `t0_wall_ns`, `t0_perf_ns`, `venue_ms`, `t1_wall_ns`, `t1_perf_ns` |
-| `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest) |
+| `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest), and since v0.4.1 `clocks` (`{wall, interval}`: `implementation`, `resolution_ns`); v0.4.0 sessions without `clocks` remain valid |
 | `SESSION_MANIFEST.json` | — | below; written last, atomically |
 
 Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing.
@@ -213,7 +217,9 @@ is not `VERIFIED` in this chain, and refuses if any file of any original session
 files) differs at the end from its state before the snapshot; it re-checks every output line (canonical Core
 event, contiguous over the declared range), removes the snapshots, removes its own output on any refusal or error,
 and writes a **new** directory with `events.jsonl` (the
-concatenation of the sessions' events, contiguous) and `CHAIN_MANIFEST.json` (`schema: "FTDI-Live-Chain-v1"`,
+concatenation of the sessions' events, contiguous), `source_manifest.json` (since v0.4.1: the
+`FTDI-Core-SourceManifest-v1` record `prepare` writes for historical files, `source_kind: LIVE_SESSION_CHAIN`, so the
+archive-aware audit checks the declared hash, count and range) and `CHAIN_MANIFEST.json` (`schema: "FTDI-Live-Chain-v1"`,
 symbol, lane, first/last seq, count, per session id, path, manifest SHA-256, events SHA-256, range and stop reason,
 and the SHA-256 of the output). The output is an ordinary immutable source:
 
@@ -230,5 +236,7 @@ the lane, and the archive-aware audit is `COMPLETE`.
 **Latency evidence.** `python -m ftdi_core analyze-clock-evidence --session DIR [--report FILE]` applies the
 ADR-008 rules (`docs/TASK003_TIME_PROVENANCE_DESIGN.md`) to the WebSocket message that **first** delivered each
 event (events recovered only by REST have no read time and are counted separately). Each event uses the
-minimum-RTT clock sample within `max_offset_age_s` of its read time. Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)
+minimum-RTT clock sample within `max_offset_age_s` of its read time; the local clock resolution in the
+uncertainty is the session's recorded wall-clock resolution (15.625 ms assumed on Windows for v0.4.0 sessions). A
+report with corrected but no trusted samples has status `NO_TRUSTED_SAMPLES`. Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)
 exclude samples; percentiles need 20 / 100 / 1000 trusted samples; nothing is certified.

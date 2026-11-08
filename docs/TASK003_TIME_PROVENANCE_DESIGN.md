@@ -63,11 +63,15 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
 | `OFFSET_STALE` | estimate older than `max_age` | excluded from percentiles |
 | `OFFSET_UNCERTAIN` | `u(t)` above the policy limit (default 20 ms) | excluded from percentiles |
 | `NEGATIVE_BEYOND_UNCERTAINTY` | `L < −u(t)` | clock model or timestamp definition is wrong; excluded and counted; many → report INCONCLUSIVE |
-| `WALL_CLOCK_STEP` | wall and perf disagree between consecutive reads by more than the tolerance | offset invalidated from that point |
+| `WALL_CLOCK_STEP` | the wall-minus-interval level departs from the median of the preceding reads by more than the tolerance and the median of this and the next 20 reads departs as well (a lasting shift; since v0.4.1 — a single disagreeing pair, jitter or a short run of quantised stamps is not a step) | offset invalidated from that point |
+| `READ_STAMP_OUTLIER` | (since v0.4.1) the read's level departs from the median of the preceding reads by more than the tolerance without a lasting shift (jitter, a quantised run, or a deviating last read) | that read alone is excluded |
 | `QUEUED_READ` | `queue_depth_at_read > 0`, or the read followed the previous one faster than the interval-clock resolution | read time ≠ arrival time; excluded from latency, kept for throughput |
 | `LOW_RESOLUTION_CLOCK` | interval clock resolution above the limit | no interval metrics |
 
 ## 5. Percentile reporting rules
+
+(since v0.4.1) Status `NO_TRUSTED_SAMPLES` when latencies could be corrected but no sample is trusted.
+
 
 P50/P95/P99 are computed **only** over samples without exclusion tags and only when the trusted count is at
 least `min_samples` (defaults: 20 for P50, 100 for P95, 1000 for P99; otherwise `"insufficient samples"`).

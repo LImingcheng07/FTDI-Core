@@ -1,13 +1,13 @@
 # FTDI-Core: instructions for Claude Code
 
-You are working on FTDI-Core v0.4.0 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
+You are working on FTDI-Core v0.4.1 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
 
 **Governance (since 2026-11-06, see `FTDI_CLAUDE_CODE_HANDOFF.md`)**: Claude Code owns architecture, implementation, tests, refactoring and versioning decisions. Older steps that require approval from ChatGPT or a reviewer are superseded. The owner's explicit consent is still required for irreversible or high-risk actions: deleting real data/archives/consumer DBs, destructive schema migrations, `git push`/force/reset/history rewrites, credentials, accounts or trading. Work may be delegated to local agents (e.g. `codex exec`); verify delegated output before relying on it.
 
 ## First actions in every session
 1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/ARCHITECTURE_V1_2.md, docs/DATA_CONTRACT_V1.md, docs/RELEASE_GATES_V03.md and docs/RELEASE_GATES_V04.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 409 at v0.4.0, 1 skipped by design)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 416 at v0.4.1, 1 skipped by design)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.
@@ -45,7 +45,11 @@ You are working on FTDI-Core v0.4.0 (Python 3.10+, stdlib-only research prototyp
 - `scripts/` Windows setup/verification and packaging
 
 ## Current state
-**v0.4.0 released 2026-11-08** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, local only). v0.4.0 adds live read-only ingestion (Task 004, ADR-011, `docs/LIVE_CAPTURE.md`, `ftdi_core/live/`): `live-capture` into sealed sessions (stdlib WebSocket client; loopback unless `--public-network`), `verify-session`, `seal-session`, `compose-sessions` (verified chain -> one replay source), `analyze-clock-evidence --session`; simulated venue `tests/fakevenue.py`, loopback acceptance `scripts/acceptance_live_loopback.py`. The real-network pilot has NOT been run (owner's decision). v0.3.1 added `vacuum-db` (ADR-010, `docs/STORAGE_MAINTENANCE.md`). v0.3.0 (`RELEASE_NOTES_v0.3.0.md`, gates `docs/RELEASE_GATES_V03.md`,
+**v0.4.1 released 2026-11-08** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, `v0.4.1`, local only). v0.4.1 fixes the live clock
+evidence found by the owner-approved real-network pilot (`docs/REAL_LIVE_PILOT_RESULTS.md`, `RELEASE_NOTES_v0.4.1.md`):
+precise Windows wall clock (`ftdi_core/live/clocks.py`), clock samples timed after connect, lasting-shift
+`WALL_CLOCK_STEP` + `READ_STAMP_OUTLIER`, status `NO_TRUSTED_SAMPLES`, chain `source_manifest.json`. The pilot data in
+`C:\ftdi\live*` is the owner's: never delete or compact it. v0.4.0 adds live read-only ingestion (Task 004, ADR-011, `docs/LIVE_CAPTURE.md`, `ftdi_core/live/`): `live-capture` into sealed sessions (stdlib WebSocket client; loopback unless `--public-network`), `verify-session`, `seal-session`, `compose-sessions` (verified chain -> one replay source), `analyze-clock-evidence --session`; simulated venue `tests/fakevenue.py`, loopback acceptance `scripts/acceptance_live_loopback.py`. v0.3.1 added `vacuum-db` (ADR-010, `docs/STORAGE_MAINTENANCE.md`). v0.3.0 (`RELEASE_NOTES_v0.3.0.md`, gates `docs/RELEASE_GATES_V03.md`,
 manifest `release/PACKAGE_MANIFEST.v0.3.0.json`, ZIP built by `scripts/build_release.py`). Contents: Task 001 archive-aware
 audit (`audit-e2e-archive`, ADR-006); Task 002 phase 1 consumer retention v2 (`consumer-retention`, `plan-consumer-retention`,
 ADR-007); Core `archive-producer` (mandatory pre-audit, dry run unless `--apply`) whose prune accepts identical v2 digests as
@@ -53,5 +57,5 @@ receipts, so producer archive and consumer compaction run in either order; Task 
 live pilot yields no latency); consumer checkpoint tuning (ADR-009). Full-day acceptance: `scripts/acceptance_full_day.py`
 (evidence `examples/V030_ACCEPTANCE_EVIDENCE.json`, v0.3.1: `examples/V031_ACCEPTANCE_EVIDENCE.json`). The owner's own data was never compacted; doing so still needs explicit
 consent. Keep run data on the NVMe SSD (C:), not the E: HDD.
-Next: the owner's decision on a real-network pilot (`live-capture --public-network`, ~10 min, then verify, compose, replay, lab-e2e, audit, latency report; optionally cross-check against the next day's official ZIP). Deferred: digest watermark D (small gain, replays of old identities would need segment reads). Later: authenticated delivery; backups/power-loss tests; signed
+Next: the owner's decision on a second, short real-network capture with v0.4.1 (each real-network capture needs the owner's consent; synchronise the Windows clock first), to obtain a trusted latency estimate; optionally cross-check a session against the official daily ZIP. Deferred: digest watermark D (small gain, replays of old identities would need segment reads). Later: authenticated delivery; backups/power-loss tests; signed
 evidence.

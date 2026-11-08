@@ -27,15 +27,28 @@ no key, no order. Data in the owner's directory `C:\ftdi\live` (sessions), `C:\f
 2. **The Windows clock was not synchronised**: `w32tm /query /status` reported Leap indicator 3 (not synchronised)
    and a root dispersion of 9.18 s.
 3. **`WALL_CLOCK_STEP` was a measurement artefact, not a clock step.** Consecutive read stamps disagreed by up to
-   ±8.8 ms with alternating sign, while over the whole 596 s session wall and interval clocks differed by only
-   0.87 ms. The reader took the wall and the interval stamp in two calls and can lose the GIL in between (5 ms
-   switch interval) while the writer thread works; the step detector then flagged every later sample.
+   ±8.8 ms, in short runs of 3-4 reads at about −3.5 / −5.6 ms that returned to the level, while over the whole
+   596 s session wall and interval clocks differed by only 0.87 ms. Cause (measured afterwards on the same machine):
+   CPython 3.11 implements `time.time_ns()` on Windows with `GetSystemTimeAsFileTime()` (nominal resolution
+   15.625 ms; the effective step follows the system timer resolution). Read stamps close in time share one tick's
+   error, hence the runs. The step detector, which reacted to a single disagreeing pair, flagged every later
+   sample. (A first hypothesis — the reader losing the GIL between the two clock calls — was tested and rejected:
+   under CPU contention the two calls stayed within 0.5 ms.) The clock samples' wall stamps were quantised the
+   same way.
 
 ## Follow-up (v0.4.1)
 
-* Clock samples on a persistent connection, timed only around the request on an established connection.
-* Read stamps taken as a bracketed pair with a recorded uncertainty; the step detector requires a lasting shift,
-  not single-pair jitter.
-* A composed chain carries a source manifest the archive-aware audit recognises.
-* A latency report with 0 trusted samples is labelled as such (not `ESTIMATED`).
-* Then a short second pilot (owner's decision).
+Implemented in v0.4.1:
+
+* Wall stamps (reads and clock samples) from `GetSystemTimePreciseAsFileTime()` on Windows (100 ns; measured
+  wall-minus-interval spread 0.15 ms over 1 s against 1.27 ms for `time.time_ns()` at the time of measurement);
+  the clocks used are recorded in `CAPTURE_START.json`; v0.4.0 sessions are analysed with the coarse resolution.
+* Clock samples time only the request on an established connection (TCP/TLS setup excluded from the round trip).
+* A wall-clock step must be a lasting shift of the wall-minus-interval level (median over the next 20 reads);
+  a read that deviates by more than the 5 ms tolerance without a lasting shift is excluded on its own
+  (`READ_STAMP_OUTLIER`). Re-analysing this pilot with the new rules removes every `WALL_CLOCK_STEP` tag
+  (figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json`, `reanalysis_v041`).
+* A composed chain carries a `source_manifest.json` the archive-aware audit checks (no `SOURCE_MANIFEST_ABSENT`).
+* A latency report with 0 trusted samples has status `NO_TRUSTED_SAMPLES` (this pilot, re-analysed).
+* Not changed: the Windows clock was not synchronised; a latency claim also needs a synchronised clock.
+* Next: a short second pilot with v0.4.1 (owner's decision).
