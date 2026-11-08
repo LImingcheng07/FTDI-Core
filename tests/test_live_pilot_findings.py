@@ -376,6 +376,10 @@ class PilotFindingTests(unittest.TestCase):
                 return OffsetEstimate(-drift_ms, 2.0, event.read_wall_ns, 1.0, 1, 0)
             evidence = classify_events(reads, fresh)
             self.assertTrue(all(e.trusted for e in evidence), (ppm, [e.tags for e in evidence][:4]))
+        # majority, not unanimity: within a window spread over the tolerance (levels 0 and 4 ms), a read at -3 ms
+        # agrees with the reference and with half of the window, and is trusted
+        spread = classify_events(self._reads([0, 4] * 15 + [-3] + [0, 4] * 10), plain)
+        self.assertTrue(all(e.trusted for e in spread), [(i, e.tags) for i, e in enumerate(spread) if not e.trusted])
         # no two consecutive reads agree: no reference, nothing trusted; a single read has nothing to disagree with
         alternating = classify_events(self._reads([0, 9] * 10), plain)
         self.assertTrue(all(e.tags == ('READ_STAMP_OUTLIER',) for e in alternating))
