@@ -338,6 +338,18 @@ class PilotFindingTests(unittest.TestCase):
             self.assertIsNone(body)
             self.assertIn('SetupTimeout', records[0]['error'])
 
+            # the socket connects in time but the set-up as a whole (e.g. a slow TLS handshake) ends after the
+            # budget: deterministic failure, not a request racing the abort timer
+            class SlowHandshake(rest_module._HTTP):
+                def connect(self):
+                    super().connect()
+                    time.sleep(0.2)
+            records.clear()
+            with mock.patch.object(rest_module, '_HTTP', SlowHandshake):
+                status, body, _ = client.server_time(budget_s=0.05)
+            self.assertIsNone(status)
+            self.assertIn('SetupTimeout', records[0]['error'])
+
 
 if __name__ == '__main__':
     unittest.main()
