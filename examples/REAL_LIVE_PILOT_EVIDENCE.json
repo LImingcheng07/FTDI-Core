@@ -1,0 +1,125 @@
+{
+  "note": "Real-network pilot of FTDI-Core v0.4.0 (commit 16d7eae) on the owner's Windows 11 machine, 2026-11-08, public read-only endpoints, approved by the owner. Data stay in the owner's capture directory; this file is a summary without paths.",
+  "sessions": [
+    {
+      "session_id": "session-20261108T144814Z",
+      "first_seq": 4109678145,
+      "last_seq": 4109679982,
+      "event_count": 1838,
+      "stop_reason": "MAX_SECONDS",
+      "chain": "FIRST",
+      "counts": {
+        "ws_messages": 1838,
+        "ws_duplicates": 0,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 1,
+        "reconnects": 0,
+        "clock_samples": 11,
+        "gaps_repaired": 0
+      },
+      "endpoints": {
+        "ws": "wss://data-stream.binance.vision",
+        "rest": "https://data-api.binance.vision"
+      },
+      "public_network": true
+    },
+    {
+      "session_id": "session-20261108T145922Z",
+      "first_seq": 4109679983,
+      "last_seq": 4109680624,
+      "event_count": 642,
+      "stop_reason": "MAX_SECONDS",
+      "chain": "CONTIGUOUS",
+      "counts": {
+        "ws_messages": 446,
+        "ws_duplicates": 0,
+        "rest_pages": 1,
+        "rest_records": 196,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 1,
+        "reconnects": 0,
+        "clock_samples": 3,
+        "gaps_repaired": 1
+      },
+      "endpoints": {
+        "ws": "wss://data-stream.binance.vision",
+        "rest": "https://data-api.binance.vision"
+      },
+      "public_network": true
+    }
+  ],
+  "chain": {
+    "first_seq": 4109678145,
+    "last_seq": 4109680624,
+    "events": 2480
+  },
+  "audit": {
+    "status": "COMPLETE",
+    "issue_counts": {
+      "SOURCE_MANIFEST_ABSENT": 1
+    },
+    "metrics": {
+      "expected_events_total": 2480,
+      "matched_effects": 2480,
+      "consumer_effects": 2480,
+      "remote_missing": 0,
+      "content_conflicts": 0,
+      "source_lines_anchored": 2480
+    }
+  },
+  "latency": {
+    "session-20261108T144814Z": {
+      "status": "ESTIMATED",
+      "samples": 1838,
+      "trusted": 0,
+      "tag_counts": {
+        "OFFSET_UNCERTAIN": 1838,
+        "QUEUED_READ": 533,
+        "WALL_CLOCK_STEP": 1724
+      },
+      "latency_percentiles": {
+        "p50_ms": "insufficient samples (need 20 trusted)",
+        "p95_ms": "insufficient samples (need 100 trusted)",
+        "p99_ms": "insufficient samples (need 1000 trusted)"
+      },
+      "events_recovered_by_rest_only": 0,
+      "certified": false
+    },
+    "session-20261108T145922Z": {
+      "status": "ESTIMATED",
+      "samples": 446,
+      "trusted": 0,
+      "tag_counts": {
+        "OFFSET_UNCERTAIN": 446,
+        "QUEUED_READ": 173,
+        "WALL_CLOCK_STEP": 437
+      },
+      "latency_percentiles": {
+        "p50_ms": "insufficient samples (need 20 trusted)",
+        "p95_ms": "insufficient samples (need 100 trusted)",
+        "p99_ms": "insufficient samples (need 1000 trusted)"
+      },
+      "events_recovered_by_rest_only": 196,
+      "certified": false
+    }
+  },
+  "clock_samples": {
+    "count": 14,
+    "rtt_ms_min": 753.9,
+    "rtt_ms_median": 935.0,
+    "offset_ms_at_min_rtt": 479.6
+  },
+  "read_stamp_pairs": {
+    "consecutive_pairs": 1837,
+    "abs_disagreement_over_5ms": 144,
+    "max_abs_disagreement_ms": 8.8,
+    "whole_session_wall_minus_perf_ms": 0.87
+  },
+  "windows_time": "w32tm /query /status: Leap indicator 3 (not synchronised), root dispersion 9.18 s, source ntp.aliyun.com"
+}
