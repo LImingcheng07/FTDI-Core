@@ -7,26 +7,39 @@ from pathlib import Path
 from ..timeprov import (EventTimes, OffsetSample, TimePolicy, assess_clocks, estimate_offset, classify_events,
                         percentile_report)
 from .events import FormatError, parse_ws
-from .session import MANIFEST, START, verify_session
+from .session import MANIFEST, START, split_lines, verify_session
 
-V040_WINDOWS_WALL_RESOLUTION_MS = 15.625   # sessions without a clocks record: time.time_ns() (GetSystemTimeAsFileTime)
+V040_WALL_RESOLUTION_MS = 15.625   # sessions without a clocks record: the coarsest supported wall clock
+                                   # (time.time_ns() on Windows: GetSystemTimeAsFileTime), whatever analyses them
 
 SCHEMA = 'FTDI-Core-Live-Latency-v1'
 
 
 def _lines(path):
     data = Path(path).read_bytes()
-    return [json.loads(line) for line in data.decode('utf-8').splitlines()]
+    return [json.loads(line) for line in split_lines(data)]   # newline only: U+2028 etc. may be inside a line
 
 
 def nearest_estimator(samples, policy, local_resolution_ms=None):
-    """event -> minimum-RTT estimate among the samples within ``max_offset_age_s`` of the event's read time."""
-    usable = sorted((s for s in samples if s.rtt_ms <= policy.max_rtt_ms), key=lambda s: s.t0_wall_ns)
+    """event -> minimum-RTT estimate among the samples within ``max_offset_age_s`` of the event's read time,
+    preferring samples taken under the same wall clock as the read (level within tolerance plus drift), so that a
+    sample taken after a wall-clock step corrects the reads after it."""
+    usable = sorted((s for s in samples if s.rtt_bound_ms <= policy.max_rtt_ms), key=lambda s: s.t0_wall_ns)
     window_ns = int(policy.max_offset_age_s * 1e9)
+    tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
 
     def estimate(event):
         near = [s for s in usable if abs((s.t0_wall_ns + s.t1_wall_ns) // 2 - event.read_wall_ns) <= window_ns]
-        return estimate_offset(near, local_resolution_ms=local_resolution_ms, policy=policy) if near else None
+        if not near:
+            return None
+        if event.read_perf_ns is not None:
+            level = event.read_wall_ns - event.read_perf_ns
+            same = [s for s in near if s.level_ns is not None and abs(level - s.level_ns)
+                    <= tolerance_ns + rate * abs(event.read_perf_ns - (s.t0_perf_ns + s.t1_perf_ns) // 2)]
+            found = estimate_offset(same, local_resolution_ms=local_resolution_ms, policy=policy) if same else None
+            if found is not None:
+                return found
+        return estimate_offset(near, local_resolution_ms=local_resolution_ms, policy=policy)
     return estimate
 
 
@@ -42,10 +55,7 @@ def session_wall_resolution_ms(session):
     clocks = start.get('clocks')
     if clocks:
         return clocks['wall']['resolution_ns'] / 1e6, clocks['wall']['implementation']
-    import sys
-    if sys.platform == 'win32':
-        return V040_WINDOWS_WALL_RESOLUTION_MS, 'time.time_ns (GetSystemTimeAsFileTime, assumed for a v0.4.0 session)'
-    return None, 'time.time_ns (v0.4.0 session)'
+    return V040_WALL_RESOLUTION_MS, 'time.time_ns (no clocks record: GetSystemTimeAsFileTime resolution assumed)'
 
 
 def analyze_session(session_dir, *, policy=TimePolicy()):

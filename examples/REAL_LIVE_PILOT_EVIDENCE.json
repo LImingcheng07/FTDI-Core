@@ -131,8 +131,7 @@
         "trusted": 0,
         "tag_counts": {
           "OFFSET_UNCERTAIN": 1838,
-          "QUEUED_READ": 533,
-          "READ_STAMP_OUTLIER": 7
+          "QUEUED_READ": 533
         },
         "latency_percentiles": {
           "p50_ms": null,
@@ -141,7 +140,7 @@
         },
         "events_recovered_by_rest_only": 0,
         "session_wall_clock": {
-          "implementation": "time.time_ns (GetSystemTimeAsFileTime, assumed for a v0.4.0 session)",
+          "implementation": "time.time_ns (no clocks record: GetSystemTimeAsFileTime resolution assumed)",
           "resolution_ms": 15.625
         },
         "certified": false
@@ -161,7 +160,7 @@
         },
         "events_recovered_by_rest_only": 196,
         "session_wall_clock": {
-          "implementation": "time.time_ns (GetSystemTimeAsFileTime, assumed for a v0.4.0 session)",
+          "implementation": "time.time_ns (no clocks record: GetSystemTimeAsFileTime resolution assumed)",
           "resolution_ms": 15.625
         },
         "certified": false

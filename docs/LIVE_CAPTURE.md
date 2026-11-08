@@ -47,7 +47,9 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
 * A reader thread receives WebSocket messages and, immediately after each read, records `read_perf_ns`
   (`time.perf_counter_ns()`), `read_wall_ns` (the precise wall clock: `GetSystemTimePreciseAsFileTime()` on Windows,
   `time.time_ns()` elsewhere — CPython before 3.13 implements `time.time_ns()` on Windows with the coarse
-  `GetSystemTimeAsFileTime()`) and `queue_depth` (messages already waiting in
+  `GetSystemTimeAsFileTime()`; the wall clock is read between two interval-clock reads and mapped to
+  `read_perf_ns`, retried up to 8 times until both lie within 0.1 ms, because the ctypes call releases the GIL)
+  and `queue_depth` (messages already waiting in
   the bounded queue) and enqueues the message. A full queue stops the capture (`READER_OVERFLOW`); messages are
   never dropped (the one that did not fit is kept). The writer (calling thread) does all validation and
   persistence. When the capture stops, every message already received but not yet interpreted (still queued, or
@@ -78,12 +80,14 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   connection has an id (`conn`, from 1). A message split into more than 1024 frames → `FORMAT_ERROR`.
 * Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end (budget 2 s); the
   stamps `t0`/`t1` bracket only the request and its answer on an already established connection (TCP and TLS set-up
-  excluded) and use the same precise wall clock;
+  excluded); each of `t0` and `t1` is a wall/interval pair taken the same way as the read stamps;
   failures (transport errors, non-200, a body without an integer `serverTime`) are recorded and do not stop the
   capture.
 * Deadlines: every WebSocket handshake completes within `ws_read_timeout_s` and before the capture deadline;
   every REST call (name resolution, connect, headers, body) completes within 8 s and before the capture deadline,
-  else it is aborted and recorded as a transport error. Name resolution has no timeout of its own: it runs in a
+  else it is aborted and recorded as a transport error. The minimum interval between REST calls
+  (`rest_min_interval_s`, never shortened) is waited for first and counts against the call's budget; the network
+  part gets what remains, at least 0.05 s. Name resolution has no timeout of its own: it runs in a
   worker thread that is abandoned at the deadline (since v0.4.1); a connection set up after the budget is a
   failed attempt, not a late answer. A capture therefore ends at most a few seconds after
   `max_seconds` (the final clock sample has its own 2 s budget).
@@ -238,8 +242,11 @@ the lane, and the archive-aware audit is `COMPLETE`.
 **Latency evidence.** `python -m ftdi_core analyze-clock-evidence --session DIR [--report FILE]` applies the
 ADR-008 rules (`docs/TASK003_TIME_PROVENANCE_DESIGN.md`) to the WebSocket message that **first** delivered each
 event (events recovered only by REST have no read time and are counted separately). Each event uses the
-minimum-RTT clock sample within `max_offset_age_s` of its read time; the local clock resolution in the
-uncertainty is the session's recorded wall-clock resolution (15.625 ms assumed on Windows for v0.4.0 sessions). A
+minimum-RTT clock sample within `max_offset_age_s` of its read time, preferring samples taken under the same wall
+clock as the read (their wall-minus-interval levels agree), so that a sample taken after a wall-clock step corrects
+the reads after it. The round trip of a sample is the larger of its wall and interval measurement. The local clock
+resolution in the uncertainty is the session's recorded wall-clock resolution (15.625 ms assumed for v0.4.0
+sessions, which recorded none, whatever machine analyses them). A
 report with corrected but no trusted samples has status `NO_TRUSTED_SAMPLES`. Clock samples carry interval
 stamps, so each read is checked against the wall-minus-interval level of the sample that corrects it (a moved wall
 clock excludes that read; a smaller difference is added to its uncertainty). Tags (`QUEUED_READ`, `OFFSET_UNCERTAIN`, ...)

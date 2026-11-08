@@ -7,7 +7,7 @@ You are working on FTDI-Core v0.4.1 (Python 3.10+, stdlib-only research prototyp
 ## First actions in every session
 1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/ARCHITECTURE_V1_2.md, docs/DATA_CONTRACT_V1.md, docs/RELEASE_GATES_V03.md and docs/RELEASE_GATES_V04.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 425 at v0.4.1, 1 skipped by design)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 429 at v0.4.1, 1 skipped by design)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.

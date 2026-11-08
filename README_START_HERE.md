@@ -40,7 +40,7 @@ Respond in Chinese.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 ```
 
-Expected for v0.4.1: **425 Core (1 skipped by design) + 45 frozen compatibility = 470 tests**, verified on native Windows 11 / Python 3.11.9 (`docs/RELEASE_GATES_V04.md`). The v0.2 baseline was 65 + 45. Verify the package files with `python scripts\Check-Release-Manifest.py`.
+Expected for v0.4.1: **429 Core (1 skipped by design) + 45 frozen compatibility = 474 tests**, verified on native Windows 11 / Python 3.11.9 (`docs/RELEASE_GATES_V04.md`). The v0.2 baseline was 65 + 45. Verify the package files with `python scripts\Check-Release-Manifest.py`.
 
 ## Known limits
 

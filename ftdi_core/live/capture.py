@@ -10,19 +10,21 @@ from pathlib import Path
 
 from .. import __version__
 from .endpoints import resolve
-from .clocks import INTERVAL_CLOCK, WALL_CLOCK, wall_time_ns
+from .clocks import INTERVAL_CLOCK, WALL_CLOCK, stamp_pair
 from .limits import CaptureLimits
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
 from .rest import RateLimited, RestClient, UnusableBody
-from .session import (START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
+from .session import (MAX_INT64, START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
                       parse_raw, previous_link, raw_rest_record, raw_ws_record, utc_iso, write_new_json)
 from .wsclient import ConnectionClosed, WebSocket, WebSocketError
 
 
 def _read_stamps():
-    """(interval stamp, wall stamp) of a read that just returned: the interval clock first, then the precise wall
-    clock (``clocks.wall_time_ns``; ``time.time_ns`` is quantised to system-timer ticks on Windows)."""
-    return time.perf_counter_ns(), wall_time_ns()
+    """(interval stamp, wall stamp) of a read that just returned: the interval clock immediately, then the precise
+    wall clock mapped to that instant (``clocks.stamp_pair``; ``time.time_ns`` is quantised on Windows)."""
+    perf = time.perf_counter_ns()
+    wall, _ = stamp_pair(perf)
+    return perf, wall
 
 
 class _Stop(Exception):
@@ -114,7 +116,7 @@ class _Capture:
             venue_ms = obj.get('serverTime') if isinstance(obj, dict) else None
         except FormatError:
             return
-        if type(venue_ms) is int and venue_ms >= 0 and stamps['t1_wall_ns'] >= stamps['t0_wall_ns']:
+        if type(venue_ms) is int and 0 <= venue_ms <= MAX_INT64 and stamps['t1_wall_ns'] >= stamps['t0_wall_ns']:
             self.files.append('clock.jsonl', {'t0_wall_ns': stamps['t0_wall_ns'], 't0_perf_ns': stamps['t0_perf_ns'],
                                               'venue_ms': venue_ms, 't1_wall_ns': stamps['t1_wall_ns'],
                                               't1_perf_ns': stamps['t1_perf_ns']})

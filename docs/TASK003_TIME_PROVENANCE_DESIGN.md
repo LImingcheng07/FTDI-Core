@@ -49,7 +49,10 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
 ## 4. Offset model and latency evidence
 
 - **Offset sample** (Cristian): local wall `t0`, venue server time `s`, local wall `t1`. Offset estimate
-  `θ = s − (t0 + t1)/2`; uncertainty `u = (t1 − t0)/2 + venue resolution + local wall resolution`.
+  `θ = s − (t0 + t1)/2`; uncertainty `u = (t1 − t0)/2 + venue resolution + local wall resolution`. With
+  interval stamps (since v0.4.1) the round trip is the larger of the wall and the interval measurement, and half
+  of the wall clock's movement against the interval clock during the request is added (a wall clock moving back
+  during the request would otherwise shorten `t1 − t0` and understate `u`).
 - **Estimate**: the minimum-RTT sample within a window (NTP-style clock filter); samples with RTT above a
   limit are discarded. Uncertainty grows with age: `u(t) = u0 + ρ · |t − t_est|`, default drift bound
   ρ = 100 ppm. An estimate older than `max_age` is stale.
@@ -72,6 +75,7 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
 | `OFFSET_UNCERTAIN` | `u(t)` above the policy limit (default 20 ms) | excluded from percentiles |
 | `NEGATIVE_BEYOND_UNCERTAINTY` | `L < −u(t)` | clock model or timestamp definition is wrong; excluded and counted; many → report INCONCLUSIVE |
 | `WALL_CLOCK_STEP` | sample with interval stamps: `Δ` above tolerance + `ρ·age` and the read agrees with its neighbours (the clock moved between sample and read). Sample without them (heuristic): the reference starts with the first two consecutive reads that agree (levels within tolerance + `ρ`·elapsed); a read departs when it disagrees with both of them (catches slow ramps) or with the majority of the preceding 20 accepted reads; a lasting shift when the majority of this and the next 20 reads depart as well | sample with interval stamps: that read is excluded; heuristic: every read from that point is excluded |
+| `WALL_CLOCK_UNVERIFIED` | (since v0.4.1) the sample has interval stamps but the read has none, so its wall clock cannot be checked against the sample | excluded |
 | `READ_STAMP_OUTLIER` | (since v0.4.1) the read departs without a lasting shift (jitter, a short run of quantised stamps, a deviating last read), or comes before the first agreeing pair; with interval stamps on the sample only if `Δ` is above the limit as well | that read alone is excluded; it is never a reference for later reads |
 | `QUEUED_READ` | `queue_depth_at_read > 0` (the reader found earlier messages still waiting) | read time ≠ arrival time; excluded from latency, kept for throughput |
 | `LOW_RESOLUTION_CLOCK` | interval clock resolution above the limit | no interval metrics |

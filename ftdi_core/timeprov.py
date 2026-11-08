@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 import math
-import statistics
 import time
 from pathlib import Path
 
@@ -29,7 +28,8 @@ ASSUMPTIONS = [
     'Samples carrying any exclusion tag are never included in percentiles.',
 ]
 EXCLUDING_TAGS = frozenset({'CLOCK_UNCORRECTED', 'OFFSET_STALE', 'OFFSET_UNCERTAIN', 'NEGATIVE_BEYOND_UNCERTAINTY',
-                            'WALL_CLOCK_STEP', 'READ_STAMP_OUTLIER', 'QUEUED_READ', 'QUEUE_DEPTH_UNKNOWN'})
+                            'WALL_CLOCK_STEP', 'READ_STAMP_OUTLIER', 'WALL_CLOCK_UNVERIFIED', 'QUEUED_READ',
+                            'QUEUE_DEPTH_UNKNOWN'})
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,28 @@ class OffsetSample:
     @property
     def rtt_ms(self):
         return (self.t1_wall_ns - self.t0_wall_ns) / 1e6
+
+    @property
+    def rtt_bound_ms(self):
+        """Round trip for the error bound: the larger of the wall and the interval measurement (a wall clock moving
+        back during the request shortens the wall round trip)."""
+        if self.t0_perf_ns is None:
+            return self.rtt_ms
+        return max(self.rtt_ms, (self.t1_perf_ns - self.t0_perf_ns) / 1e6)
+
+    @property
+    def level_ns(self):
+        """Wall minus interval time at the middle of the request (None without interval stamps)."""
+        if self.t0_perf_ns is None:
+            return None
+        return (self.t0_wall_ns + self.t1_wall_ns) // 2 - (self.t0_perf_ns + self.t1_perf_ns) // 2
+
+    @property
+    def level_spread_ms(self):
+        """How far the wall clock moved against the interval clock during the request (0 without interval stamps)."""
+        if self.t0_perf_ns is None:
+            return 0.0
+        return abs((self.t1_wall_ns - self.t1_perf_ns) - (self.t0_wall_ns - self.t0_perf_ns)) / 1e6
 
     def stamps_consistent(self, policy):
         """False if the wall clock moved against the interval clock during the request (or perf runs backwards)."""
@@ -124,15 +146,16 @@ def estimate_offset(samples, *, venue_resolution_ms=1.0, local_resolution_ms=Non
     """Minimum-RTT Cristian estimate, or None if no sample is usable."""
     if local_resolution_ms is None:
         local_resolution_ms = time.get_clock_info('time').resolution * 1000
-    usable = [s for s in samples if s.rtt_ms <= policy.max_rtt_ms and s.stamps_consistent(policy)]
+    usable = [s for s in samples if s.rtt_bound_ms <= policy.max_rtt_ms and s.stamps_consistent(policy)]
     if not usable:
         return None
-    best = min(usable, key=lambda s: (s.rtt_ms, s.t0_wall_ns))
+    best = min(usable, key=lambda s: (s.rtt_bound_ms, s.t0_wall_ns))
     # Integer nanoseconds first: epoch-scale floats would lose sub-microsecond precision.
     offset_ms = (best.venue_ms * 2_000_000 - (best.t0_wall_ns + best.t1_wall_ns)) / 2_000_000
     return OffsetEstimate(offset_ms=offset_ms,
-                          uncertainty_ms=best.rtt_ms / 2 + venue_resolution_ms + local_resolution_ms,
-                          at_wall_ns=(best.t0_wall_ns + best.t1_wall_ns) // 2, rtt_ms=best.rtt_ms,
+                          uncertainty_ms=(best.rtt_bound_ms / 2 + best.level_spread_ms / 2 + venue_resolution_ms
+                                          + local_resolution_ms),
+                          at_wall_ns=(best.t0_wall_ns + best.t1_wall_ns) // 2, rtt_ms=best.rtt_bound_ms,
                           samples_used=len(usable), samples_rejected=len(samples) - len(usable),
                           at_perf_ns=None if best.t0_perf_ns is None else (best.t0_perf_ns + best.t1_perf_ns) // 2)
 
@@ -165,11 +188,14 @@ def classify_events(events, estimate, policy=TimePolicy()):
         tags = []
         raw = (event.read_wall_ns - event.venue_event_ms * 1_000_000) / 1e6
         moved_ms = 0.0
-        if event.read_perf_ns is not None and estimate is not None and estimate.at_perf_ns is not None:
-            moved = abs((event.read_wall_ns - event.read_perf_ns) - (estimate.at_wall_ns - estimate.at_perf_ns))
-            moved_ms = moved / 1e6
-            if moved > tolerance_ns + rate * abs(event.read_perf_ns - estimate.at_perf_ns):
-                tags.append('READ_STAMP_OUTLIER' if index in outliers else 'WALL_CLOCK_STEP')
+        if estimate is not None and estimate.at_perf_ns is not None:
+            if event.read_perf_ns is None:   # nothing to check the read's wall clock against the sample with
+                tags.append('WALL_CLOCK_UNVERIFIED')
+            else:
+                moved = abs((event.read_wall_ns - event.read_perf_ns) - (estimate.at_wall_ns - estimate.at_perf_ns))
+                moved_ms = moved / 1e6
+                if moved > tolerance_ns + rate * abs(event.read_perf_ns - estimate.at_perf_ns):
+                    tags.append('READ_STAMP_OUTLIER' if index in outliers else 'WALL_CLOCK_STEP')
         elif step_at is not None and index >= step_at:
             tags.append('WALL_CLOCK_STEP')
         elif index in outliers:

@@ -10,7 +10,7 @@ import time
 import urllib.parse
 
 from . import netconnect
-from .clocks import wall_time_ns
+from .clocks import stamp_pair
 
 
 class RateLimited(Exception):
@@ -55,10 +55,13 @@ class RestClient:
         self._last = None
 
     def _wait_interval(self):
+        """Seconds slept to keep ``min_interval_s`` between calls (never shortened: it protects the venue)."""
         if self._last is not None:
             delay = self.min_interval_s - (time.perf_counter() - self._last)
             if delay > 0:
                 time.sleep(delay)
+                return delay
+        return 0.0
 
     def ready(self):
         return self._last is None or time.perf_counter() - self._last >= self.min_interval_s
@@ -69,8 +72,9 @@ class RestClient:
         The whole call (connect, headers, body) is bounded by ``budget_s`` (default ``timeout_s``): a timer
         shuts the socket down when it expires. Raises RateLimited on 429/418, UnusableBody on a 200 response
         whose body is too large or not UTF-8."""
-        self._wait_interval()
         budget = self.timeout_s if budget_s is None else max(0.05, min(self.timeout_s, budget_s))
+        waited = self._wait_interval()
+        budget = max(0.05, budget - waited)   # the wait is part of the call: the network gets what remains
         target = path + '?' + urllib.parse.urlencode(query) if query else path
         url = self.endpoint.base + target
         self._last = time.perf_counter()
@@ -89,7 +93,7 @@ class RestClient:
         try:
             conn.connect()   # TCP (+TLS) first: the stamps below bracket only the request and its answer
             netconnect.remaining(deadline)   # set-up that overran the budget is a failed attempt, not a late answer
-            t0_wall, t0_perf = wall_time_ns(), time.perf_counter_ns()
+            t0_wall, t0_perf = stamp_pair()
             conn.request('GET', target, headers={'Accept': 'application/json', 'Connection': 'close',
                                                  'User-Agent': 'FTDI-Core-readonly'})
             response = conn.getresponse()
@@ -114,8 +118,8 @@ class RestClient:
         finally:
             timer.cancel()
             conn.close()
-        t1_wall, t1_perf = wall_time_ns(), time.perf_counter_ns()
-        if t0_wall is None:   # the connection itself failed: the attempt spans the whole call
+        t1_wall, t1_perf = stamp_pair()
+        if t0_wall is None:   # set-up failed, no request was sent: the attempt is stamped at its end
             t0_wall, t0_perf = t1_wall, t1_perf
         self.recorder({'kind': kind, 'url': url, 'status': status, 't0_wall_ns': t0_wall, 't0_perf_ns': t0_perf,
                        't1_wall_ns': t1_wall, 't1_perf_ns': t1_perf, 'body': body, 'body_base64': body_base64,

@@ -40,5 +40,32 @@ else:
     WALL_CLOCK = {'implementation': time.get_clock_info('time').implementation,
                   'resolution_ns': round(time.get_clock_info('time').resolution * 1e9)}
 
+PAIR_LIMIT_NS = 100_000   # both interval reads around the wall reading within 0.1 ms
+PAIR_ATTEMPTS = 8
+
+
+def stamp_pair(at_perf_ns=None):
+    """(wall_ns, perf_ns) of one instant.
+
+    The ctypes call releases the GIL and the thread may have to wait to get it back, so an interval stamp taken
+    after the wall stamp can be late by milliseconds (review of v0.4.1). The interval clock is therefore read on
+    both sides of the wall clock, the attempt repeated (up to PAIR_ATTEMPTS) until both interval reads lie within
+    PAIR_LIMIT_NS, and the tightest attempt used. The wall stamp is mapped to ``at_perf_ns`` (default: the middle
+    of the bracket), e.g. the interval stamp taken right after a read."""
+    best = None
+    for _ in range(PAIR_ATTEMPTS):
+        before = time.perf_counter_ns()
+        wall = wall_time_ns()
+        after = time.perf_counter_ns()
+        if best is None or after - before < best[2] - best[1]:
+            best = (wall, before, after)
+        if after - before <= PAIR_LIMIT_NS:
+            break
+    wall, before, after = best
+    middle = (before + after) // 2
+    at = middle if at_perf_ns is None else at_perf_ns
+    return wall - (middle - at), at
+
+
 INTERVAL_CLOCK = {'implementation': time.get_clock_info('perf_counter').implementation,
                   'resolution_ns': max(1, round(time.get_clock_info('perf_counter').resolution * 1e9))}

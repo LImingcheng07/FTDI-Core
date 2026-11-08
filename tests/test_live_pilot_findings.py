@@ -75,8 +75,8 @@ class PilotFindingTests(unittest.TestCase):
         self.assertLess((max(offsets) - min(offsets)) / MS, 2.0, 'read stamps follow the quantised clock')
         # the clock-sample stamp is real wall time (the patched coarse clock would give an unrelated value)
         self.assertLess(abs(stamps['t0_wall_ns'] - clocks.wall_time_ns()) / 1e9, 5.0)
-        self.assertIs(rest.wall_time_ns, clocks.wall_time_ns)
-        self.assertIs(capture_module.wall_time_ns, clocks.wall_time_ns)
+        self.assertIs(rest.stamp_pair, clocks.stamp_pair)
+        self.assertIs(capture_module.stamp_pair, clocks.stamp_pair)
 
     def test_p3_jitter_is_not_a_wall_clock_step_but_a_lasting_shift_is(self):
         estimate = OffsetEstimate(offset_ms=0.0, uncertainty_ms=2.0, at_wall_ns=1_700_000_000_000 * MS, rtt_ms=1.0,
@@ -172,11 +172,9 @@ class PilotFindingTests(unittest.TestCase):
         old.mkdir()
         (old / 'CAPTURE_START.json').write_text(json.dumps({'schema': 'FTDI-Live-Capture-Start-v1'}), encoding='utf-8')
         resolution, implementation = session_wall_resolution_ms(old)
-        if sys.platform == 'win32':
-            self.assertEqual(resolution, 15.625)
-            self.assertIn('GetSystemTimeAsFileTime', implementation)
-        else:
-            self.assertIsNone(resolution)
+        # whatever machine analyses it (review F5: on Linux the analysing machine's 1 ns was used)
+        self.assertEqual(resolution, 15.625)
+        self.assertIn('GetSystemTimeAsFileTime', implementation)
 
     # -- review of v0.4.1 (Codex, round 1): F1-F4 ------------------------------------------------------------
     @staticmethod
@@ -506,6 +504,96 @@ class PilotFindingTests(unittest.TestCase):
                     moved = abs(points[k][1] - (estimate.at_wall_ns - estimate.at_perf_ns))
                     self.assertLessEqual(moved, tolerance_ns + rate * abs(points[k][0] - estimate.at_perf_ns),
                                          (case, k))
+
+    # -- independent review of v0.4.1 (round 3): F1-F8 ------------------------------------------------------
+    def test_p17_wall_and_interval_stamps_stay_paired_when_the_thread_waits_for_the_gil(self):
+        from ftdi_core.live import clocks
+        from ftdi_core.live import rest as rest_module
+        offset = 1_700_000_000_000 * MS
+        rng = __import__('random').Random(7)
+
+        def delayed_wall():   # the value is exact, but getting the GIL back afterwards sometimes takes 5 ms
+            value = time.perf_counter_ns() + offset
+            if rng.random() < 0.3:
+                time.sleep(0.005)
+            return value
+        with mock.patch.object(clocks, 'wall_time_ns', delayed_wall):
+            pairs = [clocks.stamp_pair() for _ in range(40)]
+            reads = [capture_module._read_stamps() for _ in range(40)]
+            with FakeVenue() as venue:
+                client = RestClient(Endpoint('http', '127.0.0.1', int(venue.rest_url.rsplit(':', 1)[1])),
+                                    symbol='BTCUSDT', recorder=lambda r: None, min_interval_s=0, max_body_bytes=4096)
+                stamps = [client.server_time()[2] for _ in range(10)]
+        errors = [abs(wall - perf - offset) / MS for wall, perf in pairs]
+        errors += [abs(wall - perf - offset) / MS for perf, wall in reads]
+        errors += [abs(st[f't{k}_wall_ns'] - st[f't{k}_perf_ns'] - offset) / MS for st in stamps for k in (0, 1)]
+        self.assertLess(max(errors), 0.5, 'wall and interval stamps of one instant must agree')
+
+    def test_p18_the_error_bound_covers_a_wall_clock_moving_during_the_sample_and_unchecked_reads(self):
+        # wall clock 4.9 ms back during a request of 10 ms on the interval clock (review F3)
+        wall = BASE + 5_000 * MS
+        moving = OffsetSample(wall, wall // MS + 5, wall + 5_100_000, 5_000 * MS, 5_010 * MS)
+        self.assertEqual(moving.rtt_bound_ms, 10.0)
+        self.assertAlmostEqual(moving.level_spread_ms, 4.9)
+        normal = OffsetSample(wall, wall // MS + 3, wall + 6 * MS, 5_000 * MS, 5_006 * MS)
+        estimate = estimate_offset([moving, normal], venue_resolution_ms=1.0, local_resolution_ms=0.0001)
+        self.assertEqual(estimate.rtt_ms, 6.0, 'selection by the larger of both round trips')
+        alone = estimate_offset([moving], venue_resolution_ms=1.0, local_resolution_ms=0.0001)
+        self.assertAlmostEqual(alone.uncertainty_ms, 10.0 / 2 + 4.9 / 2 + 1.0 + 0.0001, places=6)
+        # a read without an interval stamp cannot be checked against a sample that has them (review F6)
+        reads = self._reads([12] * 5)
+        reads[2] = EventTimes(reads[2].venue_event_ms, reads[2].read_wall_ns, None, 0)
+        evidence = classify_events(reads, self._sample_estimate(0))
+        self.assertEqual(evidence[2].tags, ('WALL_CLOCK_UNVERIFIED',))
+        self.assertFalse(any(e.trusted for e in evidence))
+
+    def test_p19_sessions_analyse_text_separators_bounded_server_times_and_new_samples(self):
+        from ftdi_core.live.latency import analyze_session, nearest_estimator
+        from ftdi_core.live.session import verify_session
+        # review F1: U+2028 / U+0085 inside a message must not split a line of the evidence
+        with FakeVenue(connections=[[('trade_with', 1, {'note': 'a\u2028b\x85c'}), ('trades', 2, 5)]]) as venue:
+            result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                     max_events=5, max_seconds=10.0, limits=FAST)
+        self.assertEqual(verify_session(result['session_dir'])['status'], 'VERIFIED')
+        self.assertEqual(analyze_session(result['session_dir'])['events_first_delivered_by_ws'], 5)
+        # review F4: a server time beyond 64 bits is not written as a clock sample, the session stays VERIFIED
+        with FakeVenue(connections=[[('trades', 1, 5)]], server_offset_ms=2 ** 63) as venue:
+            result = capture_session(self.base / 'd', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                     max_events=5, max_seconds=10.0, limits=FAST)
+        self.assertEqual(result['counts']['clock_samples'], 0)
+        self.assertEqual(verify_session(result['session_dir'])['status'], 'VERIFIED')
+        # review F8: after a wall-clock step, a newer sample taken under the new wall clock corrects the reads
+        def sample(level_ms, at_perf):
+            wall = BASE + at_perf + int(level_ms * MS)
+            return OffsetSample(wall - MS // 2, (wall + MS // 2) // MS, wall + MS // 2, at_perf - MS // 2,
+                                at_perf + MS // 2)
+        old, new = sample(0, 5_000 * MS), sample(30, 5_000 * MS + 200 * MS)
+        old_better = OffsetSample(old.t0_wall_ns + MS // 4, old.venue_ms, old.t1_wall_ns - MS // 4,
+                                  old.t0_perf_ns + MS // 4, old.t1_perf_ns - MS // 4)   # lower round trip
+        estimate = nearest_estimator([old_better, new], TimePolicy(), 0.0001)
+        reads = self._reads([0] * 10 + [30] * 20)
+        evidence = classify_events(reads, estimate)
+        self.assertTrue(all(e.trusted for e in evidence), [(i, e.tags) for i, e in enumerate(evidence) if not e.trusted])
+
+    def test_p20_the_minimum_interval_between_rest_calls_counts_against_the_budget(self):
+        with FakeVenue() as venue:
+            client = RestClient(Endpoint('http', '127.0.0.1', int(venue.rest_url.rsplit(':', 1)[1])), symbol='BTCUSDT',
+                                recorder=lambda r: None, min_interval_s=0.35, max_body_bytes=4096)
+            client.server_time()
+            import ftdi_core.live.rest as rest_module
+            seen = []
+            real_timer = rest_module.threading.Timer
+
+            def timer(interval, *args, **kw):
+                seen.append(interval)
+                return real_timer(interval, *args, **kw)
+            with mock.patch.object(rest_module.threading, 'Timer', timer):
+                begin = time.perf_counter()
+                status, _, _ = client.server_time(budget_s=0.5)
+                elapsed = time.perf_counter() - begin
+        self.assertEqual(status, 200)
+        self.assertLess(seen[0], 0.5 - 0.25, 'the network budget is what remains after the wait')
+        self.assertLess(elapsed, 0.6)
 
 
 if __name__ == '__main__':
