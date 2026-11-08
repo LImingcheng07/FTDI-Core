@@ -48,7 +48,7 @@ Implemented in v0.4.1:
   samples have always recorded interval stamps): the wall clock moving between sample and read excludes that read
   only; a smaller difference is added to its uncertainty. Without interval stamps on a sample, a step must be a
   lasting shift and a deviating read is excluded alone (`READ_STAMP_OUTLIER`). Re-analysing this pilot removes
-  every `WALL_CLOCK_STEP` tag; 7 reads of session 1 are `READ_STAMP_OUTLIER` (figures in
+  every `WALL_CLOCK_STEP` tag; only `OFFSET_UNCERTAIN` (slow clock samples) and `QUEUED_READ` remain (figures in
   `examples/REAL_LIVE_PILOT_EVIDENCE.json`, `reanalysis_v041`).
 * A composed chain carries a `source_manifest.json` the archive-aware audit checks (no `SOURCE_MANIFEST_ABSENT`).
 * A latency report with 0 trusted samples has status `NO_TRUSTED_SAMPLES` (this pilot, re-analysed).

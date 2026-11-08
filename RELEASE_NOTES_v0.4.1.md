@@ -55,7 +55,7 @@ The local Windows clock was also not synchronised (w32tm Leap indicator 3), whic
   instead of noting `SOURCE_MANIFEST_ABSENT`.
 
 Re-analysed read-only with these rules, the pilot sessions have no `WALL_CLOCK_STEP` tag, status
-`NO_TRUSTED_SAMPLES` (`OFFSET_UNCERTAIN` from the slow clock samples; 7 `READ_STAMP_OUTLIER` reads in session 1),
+`NO_TRUSTED_SAMPLES` (only `OFFSET_UNCERTAIN` from the slow clock samples and legitimate `QUEUED_READ`),
 figures in `examples/REAL_LIVE_PILOT_EVIDENCE.json` (`reanalysis_v041`).
 
 The independent review (Codex) of the first v0.4.1 candidate found four defects, all fixed with regressions:
