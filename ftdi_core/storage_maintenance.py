@@ -1,7 +1,8 @@
 """Storage maintenance: ``vacuum-db`` reclaims space in one FTDI SQLite file in place (ADR-010).
 
 Contract: ``docs/STORAGE_MAINTENANCE.md``. Dry run unless ``apply``. Apply holds an exclusive SQLite lock for the
-whole operation (any other open connection -> refused), makes and *verifies* a byte copy of the database
+whole operation (refused if another connection holds a lock; nobody can open a transaction meanwhile), makes and
+*verifies* a byte copy of the database
 (``<db>.pre-vacuum-<UTC timestamp>``) before the first write, then runs SQLite's own transactional ``VACUUM`` on
 the original and proves the logical content unchanged. The copy is never deleted by FTDI.
 """

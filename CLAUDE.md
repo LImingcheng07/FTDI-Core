@@ -51,7 +51,7 @@ audit (`audit-e2e-archive`, ADR-006); Task 002 phase 1 consumer retention v2 (`c
 ADR-007); Core `archive-producer` (mandatory pre-audit, dry run unless `--apply`) whose prune accepts identical v2 digests as
 receipts, so producer archive and consumer compaction run in either order; Task 003 timestamp provenance (`analyze-clock-evidence`, ADR-008; the
 live pilot yields no latency); consumer checkpoint tuning (ADR-009). Full-day acceptance: `scripts/acceptance_full_day.py`
-(evidence `examples/V030_ACCEPTANCE_EVIDENCE.json`). The owner's own data was never compacted; doing so still needs explicit
+(evidence `examples/V030_ACCEPTANCE_EVIDENCE.json`, v0.3.1: `examples/V031_ACCEPTANCE_EVIDENCE.json`). The owner's own data was never compacted; doing so still needs explicit
 consent. Keep run data on the NVMe SSD (C:), not the E: HDD.
 Next: Task 004 live read-only ingestion, design draft `docs/TASK004_LIVE_INGEST_DESIGN.md` (sealed capture sessions + run-chain audit; the real-network pilot needs the owner's go-ahead). Deferred: digest watermark D (small gain, replays of old identities would need segment reads). Later: authenticated delivery; backups/power-loss tests; signed
 evidence.

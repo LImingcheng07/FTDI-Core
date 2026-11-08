@@ -67,7 +67,7 @@ precondition error (`FTDI_CORE_FAIL_CLOSED: ...` on stderr).
 
 * Full pipeline incl. both retention tiers, restart replay (554,441 duplicates, 0 new effects), tamper
   detection, legacy-writer block, byte-identical rehydration: **ACCEPTANCE PASS**
-  (`examples/V030_ACCEPTANCE_EVIDENCE.json`, `docs/RELEASE_GATES_V03.md`).
+  (`examples/V031_ACCEPTANCE_EVIDENCE.json`, v0.3.0: `examples/V030_ACCEPTANCE_EVIDENCE.json`; `docs/RELEASE_GATES_V03.md`).
 * Archive-aware audit of 500,000 archived + 54,441 resident events: COMPLETE (`docs/REAL_ARCHIVE_AUDIT_RESULTS.md`).
 * Consumer retention: 397 MiB → 61 MiB after VACUUM (on a copy) + 51 MiB verified archive (`docs/REAL_CONSUMER_RETENTION_RESULTS.md`).
 
