@@ -165,6 +165,26 @@ def uncertainty_at(estimate, wall_ns, policy=TimePolicy()):
     return estimate.uncertainty_ms + policy.drift_ppm * 1e-6 * age_ms
 
 
+def wall_movement_ns(event, estimate):
+    """How far the wall clock moved against the interval clock between the estimate's sample and the read (None
+    when either has no interval stamp)."""
+    if event.read_perf_ns is None or estimate.at_perf_ns is None:
+        return None
+    return abs((event.read_wall_ns - event.read_perf_ns) - (estimate.at_wall_ns - estimate.at_perf_ns))
+
+
+def movement_allowed_ns(event, estimate, policy=TimePolicy()):
+    """Tolerance plus the drift bound over the interval time between the sample and the read."""
+    return policy.wall_step_tolerance_ms * 1e6 + policy.drift_ppm * 1e-6 * abs(event.read_perf_ns - estimate.at_perf_ns)
+
+
+def read_uncertainty_ms(event, estimate, policy=TimePolicy()):
+    """Uncertainty of the read's corrected latency: the estimate's, grown by the drift bound over its age, plus the
+    measured wall-clock movement since the sample."""
+    moved = wall_movement_ns(event, estimate)
+    return uncertainty_at(estimate, event.read_wall_ns, policy) + (0.0 if moved is None else moved / 1e6)
+
+
 def classify_events(events, estimate, policy=TimePolicy()):
     """One LatencyEvidence per event; exclusion tags make a sample untrusted.
 
@@ -181,21 +201,16 @@ def classify_events(events, estimate, policy=TimePolicy()):
     estimate_for = estimate if callable(estimate) else (lambda event: estimate)
     events = list(events)
     step_at, outliers = _stamp_levels(events, policy)
-    tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
     evidences = []
     for index, event in enumerate(events):
         estimate = estimate_for(event)
         tags = []
         raw = (event.read_wall_ns - event.venue_event_ms * 1_000_000) / 1e6
-        moved_ms = 0.0
         if estimate is not None and estimate.at_perf_ns is not None:
             if event.read_perf_ns is None:   # nothing to check the read's wall clock against the sample with
                 tags.append('WALL_CLOCK_UNVERIFIED')
-            else:
-                moved = abs((event.read_wall_ns - event.read_perf_ns) - (estimate.at_wall_ns - estimate.at_perf_ns))
-                moved_ms = moved / 1e6
-                if moved > tolerance_ns + rate * abs(event.read_perf_ns - estimate.at_perf_ns):
-                    tags.append('READ_STAMP_OUTLIER' if index in outliers else 'WALL_CLOCK_STEP')
+            elif wall_movement_ns(event, estimate) > movement_allowed_ns(event, estimate, policy):
+                tags.append('READ_STAMP_OUTLIER' if index in outliers else 'WALL_CLOCK_STEP')
         elif step_at is not None and index >= step_at:
             tags.append('WALL_CLOCK_STEP')
         elif index in outliers:
@@ -210,7 +225,7 @@ def classify_events(events, estimate, policy=TimePolicy()):
         else:
             if abs(event.read_wall_ns - estimate.at_wall_ns) / 1e9 > policy.max_offset_age_s:
                 tags.append('OFFSET_STALE')
-            uncertainty = uncertainty_at(estimate, event.read_wall_ns, policy) + moved_ms
+            uncertainty = read_uncertainty_ms(event, estimate, policy)
             if uncertainty > policy.max_offset_uncertainty_ms:
                 tags.append('OFFSET_UNCERTAIN')
             latency = raw + estimate.offset_ms

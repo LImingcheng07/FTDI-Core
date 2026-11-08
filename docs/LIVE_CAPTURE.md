@@ -84,10 +84,11 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   failures (transport errors, non-200, a body without an integer `serverTime`) are recorded and do not stop the
   capture.
 * Deadlines: every WebSocket handshake completes within `ws_read_timeout_s` and before the capture deadline;
-  every REST call (name resolution, connect, headers, body) completes within 8 s and before the capture deadline,
-  else it is aborted and recorded as a transport error. The minimum interval between REST calls
-  (`rest_min_interval_s`, never shortened) is waited for first and counts against the call's budget; the network
-  part gets what remains, at least 0.05 s. Name resolution has no timeout of its own: it runs in a
+  the network part of every REST call (name resolution, connect, headers, body) completes within its budget (at
+  most 8 s, at most the time left to the capture deadline), else it is aborted and recorded as a transport error.
+  The minimum interval between REST calls (`rest_min_interval_s`, never shortened: it protects the venue) is waited
+  for first and counts against the budget; the network part gets what remains, at least 0.05 s, so a call can end
+  at most `rest_min_interval_s` + 0.05 s after its budget. Name resolution has no timeout of its own: it runs in a
   worker thread that is abandoned at the deadline (since v0.4.1); a connection set up after the budget is a
   failed attempt, not a late answer. A capture therefore ends at most a few seconds after
   `max_seconds` (the final clock sample has its own 2 s budget).
@@ -241,10 +242,13 @@ the lane, and the archive-aware audit is `COMPLETE`.
 
 **Latency evidence.** `python -m ftdi_core analyze-clock-evidence --session DIR [--report FILE]` applies the
 ADR-008 rules (`docs/TASK003_TIME_PROVENANCE_DESIGN.md`) to the WebSocket message that **first** delivered each
-event (events recovered only by REST have no read time and are counted separately). Each event uses the
-minimum-RTT clock sample within `max_offset_age_s` of its read time, preferring samples taken under the same wall
-clock as the read (their wall-minus-interval levels agree), so that a sample taken after a wall-clock step corrects
-the reads after it. The round trip of a sample is the larger of its wall and interval measurement. The local clock
+event (events recovered only by REST have no read time and are counted separately). Each event uses the one
+clock sample within `max_offset_age_s` of its read time that gives it the smallest uncertainty (round trip,
+movement during the sample, drift bound over the sample's age, wall-clock movement since), preferring samples taken
+under the same wall clock as the read (their wall-minus-interval levels agree), so that a sample taken after a
+wall-clock step corrects the reads after it. The round trip of a sample is the larger of its wall and interval
+measurement. If none of the 8 attempts of a stamp pair lies within 0.1 ms (never observed), the tightest is used
+without a mark; its residual error is at most half its spread. The local clock
 resolution in the uncertainty is the session's recorded wall-clock resolution (15.625 ms assumed for v0.4.0
 sessions, which recorded none, whatever machine analyses them). A
 report with corrected but no trusted samples has status `NO_TRUSTED_SAMPLES`. Clock samples carry interval

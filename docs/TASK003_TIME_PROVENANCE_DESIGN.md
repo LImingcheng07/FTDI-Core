@@ -54,7 +54,9 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
   of the wall clock's movement against the interval clock during the request is added (a wall clock moving back
   during the request would otherwise shorten `t1 − t0` and understate `u`).
 - **Estimate**: the minimum-RTT sample within a window (NTP-style clock filter); samples with RTT above a
-  limit are discarded. Uncertainty grows with age: `u(t) = u0 + ρ · |t − t_est|`, default drift bound
+  limit are discarded. For live sessions (since v0.4.1) each read uses the single sample in the window that gives
+  it the smallest uncertainty `u(t)` (including the drift bound over the sample's age and the measured movement
+  below), preferring samples under the read's wall clock. Uncertainty grows with age: `u(t) = u0 + ρ · |t − t_est|`, default drift bound
   ρ = 100 ppm. An estimate older than `max_age` is stale.
 - **Assumption, always stated**: the venue's server-time clock and its event-time clock are coherent. This is
   not verifiable from outside and is listed in every report.
@@ -66,7 +68,8 @@ clock's resolution as their uncertainty. Cross-host or venue-to-local quantities
   `ρ · |t_read − t_sample|` means the wall clock moved between the sample and the read, and the offset does not
   apply (`WALL_CLOCK_STEP`, or `READ_STAMP_OUTLIER` if the read also departs from its neighbouring reads);
   otherwise `Δ` is added to `u(t)`. A sample during which the level moved by more than the tolerance is
-  discarded. Without interval stamps on the sample, a heuristic on the reads alone applies (table below).
+  discarded. Without interval stamps on the sample, a heuristic on the reads alone applies (table below); in that
+  case reads without an interval stamp are not checked at all (as before v0.4.1: the model cannot check them).
 
 | Tag | Condition | Effect |
 |---|---|---|

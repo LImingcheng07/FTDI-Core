@@ -598,6 +598,28 @@ class PilotFindingTests(unittest.TestCase):
         self.assertLess(seen[0], 0.5 - 0.25, 'the network budget is what remains after the wait')
         self.assertLess(elapsed, 0.6)
 
+    def test_p21_the_sample_giving_the_read_the_smallest_uncertainty_is_used(self):
+        """Verification pass of the review: a 2 ms sample from 250 s ago was chosen over a 10 ms sample from 1 s
+        ago (minimum round trip), adding 25 ms of drift bound and excluding the read."""
+        from ftdi_core.live.latency import nearest_estimator
+
+        def sample(at_perf, rtt_ms):
+            wall = BASE + at_perf
+            half = int(rtt_ms * MS) // 2
+            return OffsetSample(wall - half, wall // MS, wall + half, at_perf - half, at_perf + half)
+        read_perf = 5_000 * MS + 251_000 * MS
+        old, recent = sample(5_000 * MS + 1_000 * MS, 2.0), sample(read_perf - 1_000 * MS, 10.0)
+        read = EventTimes(venue_event_ms=(BASE + read_perf - 40 * MS) // MS, read_wall_ns=BASE + read_perf,
+                          read_perf_ns=read_perf, queue_depth_at_read=0)
+        policy = TimePolicy()
+        chosen = nearest_estimator([old, recent], policy, 0.0001)(read)
+        self.assertEqual(chosen.at_perf_ns, recent.t0_perf_ns + 5 * MS, 'the recent sample')
+        evidence = classify_events([read], nearest_estimator([old, recent], policy, 0.0001))[0]
+        self.assertTrue(evidence.trusted, evidence.tags)
+        self.assertLess(evidence.uncertainty_ms, 7.0)
+        only_old = classify_events([read], nearest_estimator([old], policy, 0.0001))[0]
+        self.assertIn('OFFSET_UNCERTAIN', only_old.tags)
+
 
 if __name__ == '__main__':
     unittest.main()

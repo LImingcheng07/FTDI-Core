@@ -77,7 +77,12 @@ VERIFIED session could not be analysed); REST stamps took the interval clock aft
 uncertainty; a server time beyond 64 bits was written as a sample and made the session INVALID; v0.4.0 sessions
 analysed on Linux used that machine's clock resolution; reads without interval stamps were not checked; the
 minimum REST interval was not part of the budget; sample selection ignored the wall clock level; some comments
-and this file's heuristic description were inaccurate.
+and this file's heuristic description were inaccurate. Its verification pass confirmed these fixed, found no defect
+introduced by them (model check: about 28,000 trusted reads, none with an error above its uncertainty) and one more
+improvement, made: each read now uses the sample that gives it the smallest uncertainty instead of the lowest
+round trip (an old low-RTT sample added up to 25 ms of drift bound and excluded the read). Known limits: in the
+reads-only heuristic, reads without an interval stamp are not checked (as before; live sessions always have them);
+a stamp pair that stays loose after 8 attempts is not marked (never observed).
 
 ## Compatibility
 

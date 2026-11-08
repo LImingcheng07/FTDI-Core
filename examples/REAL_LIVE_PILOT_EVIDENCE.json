@@ -123,7 +123,7 @@
   },
   "windows_time": "w32tm /query /status: Leap indicator 3 (not synchronised), root dispersion 9.18 s, source ntp.aliyun.com",
   "reanalysis_v041": {
-    "note": "The same two sessions re-analysed read-only with the v0.4.1 rules (each read checked against the wall-minus-interval level of the clock sample that corrects it; READ_STAMP_OUTLIER; NO_TRUSTED_SAMPLES; session wall-clock resolution 15.625 ms assumed for v0.4.0 sessions). The \"latency\" entry above is the v0.4.0 analysis as run on the pilot day.",
+    "note": "The same two sessions re-analysed read-only with the v0.4.1 rules (each read corrected by the clock sample giving it the smallest uncertainty and checked against that sample's wall-minus-interval level; READ_STAMP_OUTLIER; NO_TRUSTED_SAMPLES; session wall-clock resolution 15.625 ms assumed for v0.4.0 sessions). The \"latency\" entry above is the v0.4.0 analysis as run on the pilot day.",
     "sessions": {
       "session-20261108T144814Z": {
         "status": "NO_TRUSTED_SAMPLES",

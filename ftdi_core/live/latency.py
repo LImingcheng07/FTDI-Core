@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from ..timeprov import (EventTimes, OffsetSample, TimePolicy, assess_clocks, estimate_offset, classify_events,
-                        percentile_report)
+                        movement_allowed_ns, percentile_report, read_uncertainty_ms, wall_movement_ns)
 from .events import FormatError, parse_ws
 from .session import MANIFEST, START, split_lines, verify_session
 
@@ -21,25 +21,24 @@ def _lines(path):
 
 
 def nearest_estimator(samples, policy, local_resolution_ms=None):
-    """event -> minimum-RTT estimate among the samples within ``max_offset_age_s`` of the event's read time,
-    preferring samples taken under the same wall clock as the read (level within tolerance plus drift), so that a
-    sample taken after a wall-clock step corrects the reads after it."""
-    usable = sorted((s for s in samples if s.rtt_bound_ms <= policy.max_rtt_ms), key=lambda s: s.t0_wall_ns)
+    """event -> the estimate, from one sample within ``max_offset_age_s`` of the event's read time, that gives the
+    read the smallest uncertainty (round trip, movement during the sample, drift bound over its age, wall-clock
+    movement since: ``timeprov.read_uncertainty_ms``, the formula the classification uses). Samples taken under the
+    same wall clock as the read (movement within tolerance plus drift) are preferred, so that a sample taken after
+    a wall-clock step corrects the reads after it; without one the read is checked against the best other sample
+    (and tagged)."""
     window_ns = int(policy.max_offset_age_s * 1e9)
-    tolerance_ns, rate = policy.wall_step_tolerance_ms * 1e6, policy.drift_ppm * 1e-6
+    single = sorted(((s, estimate_offset([s], local_resolution_ms=local_resolution_ms, policy=policy))
+                     for s in samples), key=lambda pair: pair[0].t0_wall_ns)
+    single = [(s, e) for s, e in single if e is not None]
 
     def estimate(event):
-        near = [s for s in usable if abs((s.t0_wall_ns + s.t1_wall_ns) // 2 - event.read_wall_ns) <= window_ns]
+        near = [e for s, e in single if abs(e.at_wall_ns - event.read_wall_ns) <= window_ns]
         if not near:
             return None
-        if event.read_perf_ns is not None:
-            level = event.read_wall_ns - event.read_perf_ns
-            same = [s for s in near if s.level_ns is not None and abs(level - s.level_ns)
-                    <= tolerance_ns + rate * abs(event.read_perf_ns - (s.t0_perf_ns + s.t1_perf_ns) // 2)]
-            found = estimate_offset(same, local_resolution_ms=local_resolution_ms, policy=policy) if same else None
-            if found is not None:
-                return found
-        return estimate_offset(near, local_resolution_ms=local_resolution_ms, policy=policy)
+        same = [e for e in near if wall_movement_ns(event, e) is not None
+                and wall_movement_ns(event, e) <= movement_allowed_ns(event, e, policy)]
+        return min(same or near, key=lambda e: (read_uncertainty_ms(event, e, policy), e.at_wall_ns))
     return estimate
 
 
