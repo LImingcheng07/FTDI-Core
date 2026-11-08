@@ -163,6 +163,11 @@ class PilotFindingTests(unittest.TestCase):
         report = analyze_session(result['session_dir'])
         self.assertEqual(report['session_wall_clock'], {'implementation': WALL_CLOCK['implementation'],
                                                         'resolution_ms': WALL_CLOCK['resolution_ns'] / 1e6})
+        from ftdi_core.live.latency import session_samples
+        samples = session_samples(result['session_dir'])
+        self.assertTrue(samples)
+        self.assertTrue(all(type(s.t0_perf_ns) is int and type(s.t1_perf_ns) is int for s in samples),
+                        'the interval stamps of the clock samples reach the model')
         old = self.base / 'v040'
         old.mkdir()
         (old / 'CAPTURE_START.json').write_text(json.dumps({'schema': 'FTDI-Live-Capture-Start-v1'}), encoding='utf-8')
@@ -219,6 +224,8 @@ class PilotFindingTests(unittest.TestCase):
                                                               5_002 * MS)]).samples_rejected, 1)
         with self.assertRaises(ValueError):
             OffsetSample(wall, wall // MS, wall + 2 * MS, 5_000 * MS, None)
+        reversed_perf = OffsetSample(wall, wall // MS, wall + 2 * MS, 5_000 * MS, 4_998 * MS)
+        self.assertIsNone(estimate_offset([reversed_perf]), 'interval stamps running backwards')
 
     def test_p9_an_absurd_clock_resolution_makes_the_session_invalid_not_the_analysis_crash(self):
         from ftdi_core.live.latency import analyze_session
@@ -280,6 +287,16 @@ class PilotFindingTests(unittest.TestCase):
                 self.assertTrue(all(abs(e.latency_ms - 40) < 0.01 for e in evidence))
         evidence = classify_events(reads(400), fresh(400, False))
         self.assertTrue(any('WALL_CLOCK_STEP' in e.tags for e in evidence), 'drift far beyond the policy')
+        # a read 100 s after its sample, the wall clock having drifted 80 ppm (8 ms, within tolerance + drift bound):
+        # trusted, with the drift bound and the measured difference in its uncertainty
+        estimate = self._sample_estimate(0)
+        perf = 5_000 * MS + 100_000 * MS
+        read = EventTimes(venue_event_ms=(BASE + perf - 40 * MS) // MS, read_wall_ns=BASE + perf + 8 * MS,
+                          read_perf_ns=perf, queue_depth_at_read=0)
+        evidence = classify_events([read], estimate)[0]
+        self.assertEqual(evidence.tags, ())
+        self.assertTrue(evidence.trusted)
+        self.assertAlmostEqual(evidence.uncertainty_ms, estimate.uncertainty_ms + 10.0 + 8.0, delta=0.01)
 
     def test_p12_name_resolution_and_connect_are_bounded_by_the_deadline(self):
         from ftdi_core.live import netconnect
