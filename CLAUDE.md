@@ -45,7 +45,7 @@ You are working on FTDI-Core v0.4.1 (Python 3.10+, stdlib-only research prototyp
 - `scripts/` Windows setup/verification and packaging
 
 ## Current state
-**v0.4.1 released 2026-11-08** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, `v0.4.1`, local only). v0.4.1 fixes the live clock
+**v0.4.1 released 2026-11-09** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, `v0.4.1`, local only). v0.4.1 fixes the live clock
 evidence found by the owner-approved real-network pilot (`docs/REAL_LIVE_PILOT_RESULTS.md`, `RELEASE_NOTES_v0.4.1.md`):
 precise Windows wall clock (`ftdi_core/live/clocks.py`), clock samples timed after connect, each read checked against
 the wall-minus-interval level of its clock sample (`timeprov.classify_events`; heuristic `_stamp_levels` otherwise),

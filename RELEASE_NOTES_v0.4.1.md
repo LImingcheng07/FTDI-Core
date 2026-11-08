@@ -1,6 +1,6 @@
 # FTDI-Core v0.4.1 — release notes
 
-Date: 2026-11-08. Platform verified: native Windows 11 Pro, Python 3.11.9, SQLite 3.45.1. Status: **local research
+Date: 2026-11-09. Platform verified: native Windows 11 Pro, Python 3.11.9, SQLite 3.45.1. Status: **local research
 prototype; not production certified; not a trading program.** Corrective release for the clock evidence of live
 capture, after the owner-approved real-network pilot of v0.4.0 (`docs/REAL_LIVE_PILOT_RESULTS.md`). Capture,
 sequencing, gap repair, sealing, verification, composition and the historical pipeline are unchanged.

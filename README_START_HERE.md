@@ -1,6 +1,6 @@
 # FTDI + Claude Code / Windows development kit
 
-This folder is the **FTDI-Core v0.4.1 source tree** (released 2026-11-08), with `CLAUDE.md`, work orders and Windows scripts. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled. **End users: read `docs/USER_GUIDE_zh.md` (Chinese) and `README.md`.**
+This folder is the **FTDI-Core v0.4.1 source tree** (released 2026-11-09), with `CLAUDE.md`, work orders and Windows scripts. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled. **End users: read `docs/USER_GUIDE_zh.md` (Chinese) and `README.md`.**
 
 ## Start in PowerShell (in this folder)
 

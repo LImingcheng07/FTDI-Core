@@ -51,3 +51,57 @@ Evidence: `examples/V040_LIVE_LOOPBACK_EVIDENCE.json` (commit `bff6f9b`).
 
 Sustained real-network operation of the v0.4 collector (a real-network pilot is the owner's decision);
 venue-to-user latency (the loopback figures measure this machine only); everything listed as not proven in v0.3.
+
+## v0.4.1 (2026-11-09): clock evidence corrected after the real-network pilot
+
+Corrective release (`RELEASE_NOTES_v0.4.1.md`) for the findings of the owner-approved real-network pilot
+(`docs/REAL_LIVE_PILOT_RESULTS.md`). Gates L1–L9 above still hold for the unchanged capture, sequencing, sealing,
+verification and composition; the gates below cover the change. Regressions: `tests/test_live_pilot_findings.py` (21: p1–p7 for the pilot
+findings, p8–p21 for the review findings).
+
+| # | Gate | Evidence | Status |
+|---|---|---|---|
+| P1 | Live read stamps and clock samples use the precise wall clock (`GetSystemTimePreciseAsFileTime()` on Windows); `CAPTURE_START.json` records the clocks; a v0.4.0 start record without them stays valid; malformed or absurd clock records (resolution outside 1..10^9 ns) make the session INVALID instead of crashing the analysis | p2 (a coarse `time.time_ns` patched in does not reach the stamps), p6, p9 | PASS |
+| P2 | Clock-sample round trips exclude TCP/TLS setup | p1 (a 300 ms connect is not in the round trip) | PASS |
+| P3 | Each read is corrected by the clock sample that gives it the smallest uncertainty, preferring samples under its own wall clock, and checked against that sample's wall-minus-interval level (tolerance + drift bound; the measured movement is in the uncertainty; a sample during which the wall clock moved is discarded, the larger of its wall and interval round trip and half its movement enter the uncertainty; a read without an interval stamp is `WALL_CLOCK_UNVERIFIED`). Without interval stamps on the sample, a heuristic: reference from the first agreeing pair, departure from both of them or from the majority of the last 20 accepted reads, lasting shift by majority of the next 20, drift per pair, direction-independent | p8, p18, p19, p21 (per-read model), p3, p10, p11, p13 (heuristic), p16 (randomised safety invariant: no trusted read disagrees with its sample or reference; 41 violations on the code before the reference-pair check, 0 now); `tests/test_timeprov.py` unchanged and passing | PASS |
+| P4 | Status `NO_TRUSTED_SAMPLES` with 0 trusted samples; the offset uncertainty uses the session's recorded wall-clock resolution (15.625 ms assumed for v0.4.0 sessions, on any analysing machine) | p4, p7; read-only re-analysis of the pilot (`examples/REAL_LIVE_PILOT_EVIDENCE.json`, `reanalysis_v041`) | PASS |
+| P5 | A composed chain has a `source_manifest.json` the archive-aware audit checks (hash matches, no `SOURCE_MANIFEST_ABSENT`) | p5; loopback acceptance below | PASS |
+| P6 | Every fix is necessary for its regression: 52 single-fix reverts; 51 make their test fail, 1 is equivalent (outliers in the 20-read voting window are always a minority before the first step, so every vote is unchanged); unmutated passes (bytecode caching disabled, so a same-length edit cannot hit a stale `.pyc`) | mutation check on a detached worktree of `269ed0a` | PASS |
+| P7 | Independent review | Codex: first pass 4 findings (unbounded clock resolution, jittered first read as reference, drift as a step, unbounded name resolution); second pass confirmed them fixed and found 7 more (direction-dependent heuristic, >64-bit integers, socket-construction fallback, resolver exceptions, worker after an expired deadline, two documentation errors); a third Codex pass was not possible (its service rejected the API key). Independent Claude reviewer: 9 findings (line separators in evidence, GIL between wall and interval stamp, round trip shortened by a wall clock moving back, server time beyond 64 bits, resolution of v0.4.0 sessions on other machines, reads without interval stamps, REST interval outside the budget, sample selection ignoring the wall clock, documentation) and a verification pass (all confirmed fixed, two limits documented, sample choice by the read's uncertainty added). Our own check: slow ramps in the heuristic (randomised safety test). Every finding has a regression | PASS |
+| P8 | No regression of the historical pipeline | full-day acceptance from commit `269ed0a` (clean tree): **ACCEPTANCE PASS**, 554,441 events, owner's ZIP read-only (SHA-256 unchanged), incl. `vacuum-db` 404.6 → 60.9 MiB; `examples/V041_ACCEPTANCE_EVIDENCE.json` | PASS |
+| P9 | Suites and package | Core 430 (1 skipped by design), frozen S07 45, `-W error::ResourceWarning`, native Windows 11; extracted release ZIP verified (recorded in tag `v0.4.1`) | PASS |
+| P10 | Owner's pilot data untouched | the re-analysis only reads `C:\ftdi\live`; no file there created, changed or deleted | PASS |
+| P11 | Every network call bounded by its deadline including name resolution (which has no timeout of its own); a REST set-up ending after the budget is a failed attempt; address fallback also when a socket cannot be created; any resolver failure is a recorded transport error; no worker after an expired deadline; the minimum REST interval counts against the budget | p12, p15, p20 | PASS |
+| P12 | Wall and interval stamps of one instant stay paired although the ctypes wall-clock call releases the GIL (`stamp_pair`: interval clock read on both sides, retried until within 0.1 ms) | p17 (wall clock returning late 30 % of the time: error < 0.5 ms); measured with a CPU-bound thread competing for the GIL: level spread 0.016 ms, against 10.7 ms for wall-then-interval | PASS |
+| P13 | A VERIFIED session can always be analysed | p14 (integers beyond 64 bits are INVALID), p19 (U+2028/U+0085 sent raw inside a message; a server time beyond 64 bits is not written as a sample) | PASS |
+
+### Live pipeline acceptance on 127.0.0.1, v0.4.1 (`scripts/acceptance_live_loopback.py`)
+
+| Session | Range | Events | Stop | Chain | WS messages | WS duplicates | REST records | Reconnects | Gaps repaired | Verify |
+|---|---|---:|---|---|---:|---:|---:|---:|---:|---|
+| `session-20261108T180540Z` | 1..1000 | 1000 | MAX_EVENTS | FIRST | 980 | 19 | 40 | 0 | 1 | VERIFIED |
+| `session-20261108T180542Z` | 1001..2000 | 1000 | MAX_EVENTS | CONTIGUOUS | 920 | 18 | 99 | 1 | 1 | VERIFIED |
+| `session-20261108T180546Z` | 2001..2500 | 500 | MAX_EVENTS | CONTIGUOUS | 510 | 9 | 0 | 0 | 0 | VERIFIED |
+
+| Check | Result |
+|---|---|
+| session 1: gap repaired by REST, VERIFIED | PASS |
+| session 2: reconnect, catch-up, chain CONTIGUOUS, VERIFIED | PASS |
+| events 1..2000 equal the venue ground truth exactly (gap and reconnect range included) | PASS |
+| chain 1 composed 1..2000 | PASS |
+| replay of chain 1 complete | PASS |
+| lab-e2e (separate consumer process) passes | PASS |
+| archive-aware audit COMPLETE | PASS |
+| session 3 VERIFIED | PASS |
+| re-composed chain: 2000 duplicates, 500 new effects | PASS |
+| archive-aware audit of the longer chain COMPLETE | PASS |
+| latency evidence follows ADR-008 (never certified) | PASS |
+
+Latency evidence of session 1 (loopback, this machine only): status ESTIMATED, 730 trusted of 960 samples, excluded tags {'QUEUED_READ': 230}, P50 0.175 ms, P95 0.777 ms, P99: insufficient samples (need 1000 trusted); 40 events recovered by REST only (no read time). ftdi-core 0.4.1, Python 3.11.9, SQLite 3.45.1, 2026-11-09 02:05:40 → 2026-11-09 02:05:48.
+
+Evidence: `examples/V041_LIVE_LOOPBACK_EVIDENCE.json` (commit `269ed0a`).
+
+### Not proven (v0.4.1)
+
+A latency figure from the real network (needs a v0.4.1 capture with a synchronised local clock: the owner's
+decision); sustained real-network operation; everything listed as not proven for v0.4.0 and v0.3.
