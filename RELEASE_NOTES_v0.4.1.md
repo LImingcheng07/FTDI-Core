@@ -59,7 +59,10 @@ direction of an early step and paired medians of different reads (R2-1, now pair
 pair); an absurd interval stamp in a VERIFIED session crashed the analysis (R2-2, every evidence integer and venue
 integer is now bounded to 64 bits); a socket-construction error prevented trying the next address (R2-3); a
 non-OSError in the resolver became a KeyError (R2-4); an expired deadline still started a resolver thread (R2-5);
-the design document had the offset sign reversed and an outdated status (R2-6, R2-7).
+the design document had the offset sign reversed and an outdated status (R2-6, R2-7). A third pass (by a separate
+reviewer, Codex being unavailable) and our own check added: the heuristic also compares every read with its
+reference pair, so a ramp faster than the drift bound cannot creep away from the reference while each read agrees
+with its recent neighbours; a randomised safety test asserts that no trusted read disagrees with its reference.
 
 ## Compatibility
 

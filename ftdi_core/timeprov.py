@@ -203,9 +203,11 @@ def _stamp_levels(events, policy):
 
     The level of a read is its wall stamp minus its interval stamp. Two reads *agree* when their levels differ by
     at most the tolerance plus the allowed drift (``policy.drift_ppm``) over the time between them, so slow drift
-    is never a shift. The reference starts with the first two consecutive reads that agree; reads before them are
-    outliers (a deviating first read must not become the reference). A read *departs* when it disagrees with the
-    majority of the last STEP_CONFIRM accepted reads (outliers are never a reference). A departing read starts a
+    is never a shift. The reference starts with the first two consecutive reads that agree (the *anchor*); reads
+    before them are outliers (a deviating first read must not become the reference). A read *departs* when it
+    disagrees with both anchor reads (so a slow ramp faster than the drift bound cannot creep away from the
+    reference) or with the majority of the last STEP_CONFIRM accepted reads (outliers are never a reference;
+    the window catches what has just changed). A departing read starts a
     lasting shift when the majority of this and the next STEP_CONFIRM reads depart as well (at least two reads),
     otherwise it is an outlier: jitter, a short run of quantised stamps as in the 2026-11-08 pilot, a deviating last
     read. The rule does not depend on the direction of a shift."""
@@ -217,7 +219,8 @@ def _stamp_levels(events, policy):
         return abs(a[2] - b[2]) <= tolerance_ns + rate * abs(a[1] - b[1])
 
     def departs(point, window):
-        return 2 * sum(not agree(point, member) for member in window) > len(window)
+        return (not any(agree(point, member) for member in accepted[:2])
+                or 2 * sum(not agree(point, member) for member in window) > len(window))
 
     outliers, accepted = set(), []
     for k, point in enumerate(points):

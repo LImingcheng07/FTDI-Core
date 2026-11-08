@@ -20,8 +20,8 @@ from ftdi_core.live.compose import compose_sessions
 from ftdi_core.live.endpoints import Endpoint
 from ftdi_core.live.rest import RestClient
 from ftdi_core.service import replay
-from ftdi_core.timeprov import (EventTimes, OffsetEstimate, OffsetSample, classify_events, estimate_offset,
-                             percentile_report)
+from ftdi_core.timeprov import (EventTimes, OffsetEstimate, OffsetSample, TimePolicy, classify_events,
+                             estimate_offset, percentile_report)
 
 MS = 1_000_000
 BASE = 1_700_000_000_000 * MS
@@ -459,6 +459,49 @@ class PilotFindingTests(unittest.TestCase):
                     netconnect.connect('127.0.0.1', port, time.perf_counter() - 1.0)
             self.assertEqual(calls, [])
             self.assertEqual(sum(t.name == 'ftdi-resolve' for t in threading.enumerate()), workers)
+
+    def test_p16_no_trusted_read_disagrees_with_its_reference(self):
+        """Safety invariant over many random level sequences (fixed seed): jitter, runs, steps, ramps, drift."""
+        import random
+        policy = TimePolicy()
+        tolerance_ns, rate = policy.wall_step_tolerance_ms * MS, policy.drift_ppm * 1e-6
+        # a ramp faster than the drift bound with dense reads: each read agrees with its neighbours
+        ramp = [i * 10 * 0.001 for i in range(2000)]   # 1000 ppm at one read per 10 ms (0.01 ms per read)
+        plain = OffsetEstimate(offset_ms=0.0, uncertainty_ms=2.0, at_wall_ns=BASE + 5_000 * MS, rtt_ms=1.0,
+                               samples_used=1, samples_rejected=0)
+        evidence = classify_events(self._reads(ramp), plain)
+        self.assertTrue(any('WALL_CLOCK_STEP' in e.tags for e in evidence), 'a 1000 ppm ramp is not drift')
+        rng = random.Random(20261109)
+        for case in range(300):
+            levels, level = [], 0.0
+            for _ in range(rng.randint(1, 400)):
+                kind = rng.random()
+                if kind < 0.05:
+                    level += rng.choice((-1, 1)) * rng.uniform(3, 40)        # a step
+                slope = rng.choice((0, 0, 0, 0.0005, -0.0005, 0.05, -0.05))  # ms per read (10 ms apart)
+                level += slope
+                jitter = rng.uniform(-9, 9) if rng.random() < 0.1 else rng.uniform(-0.5, 0.5)
+                levels.append(level + jitter)
+            reads = self._reads(levels)
+            # heuristic: a trusted read agrees with one of the two reads of the first agreeing pair
+            evidence = classify_events(reads, plain)
+            points = [(r.read_perf_ns, r.read_wall_ns - r.read_perf_ns) for r in reads]
+
+            def agree(a, b):
+                return abs(a[1] - b[1]) <= tolerance_ns + rate * abs(a[0] - b[0])
+            pair = next((k for k in range(len(points) - 1) if agree(points[k], points[k + 1])), None)
+            for k, e in enumerate(evidence):
+                if e.trusted and len(points) > 1:
+                    self.assertIsNotNone(pair, (case, levels))
+                    self.assertTrue(agree(points[k], points[pair]) or agree(points[k], points[pair + 1]),
+                                    (case, k, levels))
+            # per-read model: a trusted read agrees with its clock sample (level 0 at the first read's time)
+            estimate = self._sample_estimate(0)
+            for k, e in enumerate(classify_events(reads, estimate)):
+                if e.trusted:
+                    moved = abs(points[k][1] - (estimate.at_wall_ns - estimate.at_perf_ns))
+                    self.assertLessEqual(moved, tolerance_ns + rate * abs(points[k][0] - estimate.at_perf_ns),
+                                         (case, k))
 
 
 if __name__ == '__main__':
