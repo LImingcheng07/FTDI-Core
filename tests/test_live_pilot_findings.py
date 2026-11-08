@@ -550,8 +550,11 @@ class PilotFindingTests(unittest.TestCase):
     def test_p19_sessions_analyse_text_separators_bounded_server_times_and_new_samples(self):
         from ftdi_core.live.latency import analyze_session, nearest_estimator
         from ftdi_core.live.session import verify_session
-        # review F1: U+2028 / U+0085 inside a message must not split a line of the evidence
-        with FakeVenue(connections=[[('trade_with', 1, {'note': 'a\u2028b\x85c'}), ('trades', 2, 5)]]) as venue:
+        # review F1: U+2028 / U+0085 inside a message (sent raw, not escaped) must not split a line of the evidence
+        from fakevenue import trade
+        text = json.dumps(dict(trade(1), note='a\u2028b\x85c'), ensure_ascii=False, separators=(',', ':'))
+        self.assertIn('\u2028', text)
+        with FakeVenue(connections=[[('text', text), ('trades', 2, 5)]]) as venue:
             result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
                                      max_events=5, max_seconds=10.0, limits=FAST)
         self.assertEqual(verify_session(result['session_dir'])['status'], 'VERIFIED')
