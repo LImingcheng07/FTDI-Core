@@ -50,8 +50,9 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
 * Every WebSocket text message is appended to `raw_ws` **before** it is interpreted; every REST response (any
   status) to `raw_rest` before it is interpreted.
 * `expected` = next `source_seq` to write. Without `previous_session` the first valid record seen (WS or REST)
-  anchors the session (`first_seq`). With `previous_session` (a sealed, verified session of the same symbol)
-  `expected = previous.last_seq + 1` from the start, and that is `first_seq`.
+  anchors the session (`first_seq`). With `previous_session` (a sealed, verified, **non-empty** session of the
+  same symbol; otherwise `ValueError` before any socket) `expected = previous.last_seq + 1` from the start, that is
+  `first_seq`, and one REST catch-up request `fromId=expected` is made at the start.
 * Record with `a < first_seq` (only possible with an anchor): counted `before_anchor`, compared with nothing,
   not written. `first_seq <= a < expected`: must be identical to the written event (duplicate) else conflict.
   `a == expected`: written; then buffered records continue the sequence. `a > expected`: buffered (at most
@@ -66,7 +67,8 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   `GAP_BLOCKED`.
 * Connection loss (close frame, EOF, socket error, read timeout `limits.ws_read_timeout_s`): reconnect after
   `min(8, 0.5·2^k)` s ± 10 % jitter, at most `limits.max_reconnects` times (`CONNECTION_FAILED` after that); the
-  resulting gap is repaired by the rule above. Each connection has an id (`conn`, from 1).
+  resulting gap is repaired by the rule above; after every reconnect one REST catch-up request `fromId=expected`
+  is made (an empty answer just means nothing new). Each connection has an id (`conn`, from 1).
 * Clock samples: `GET /api/v3/time` at start, every `limits.clock_interval_s`, and at the end; failures are
   recorded and do not stop the capture.
 * HTTP 429 or 418 on any REST call → `RATE_LIMITED` (the `Retry-After` value is recorded, nothing is retried).
@@ -75,7 +77,9 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   (KeyboardInterrupt), `GAP_BLOCKED`, `HALTED_CONFLICT`, `FORMAT_ERROR` (invalid WS message, invalid REST body or
   page, binary or oversized message), `READER_OVERFLOW`, `PENDING_OVERFLOW`, `RATE_LIMITED`,
   `CONNECTION_FAILED`. Every stop seals the session with the contiguous events written so far (possibly none).
-  Nothing past a gap or a conflict is ever written to `events.jsonl`.
+  Nothing past a gap or a conflict is ever written to `events.jsonl`. A conflict for an **already written** seq
+  makes that seq ambiguous: at sealing, `events.jsonl` is cut back to the events **before** it (the raw files keep
+  both deliveries), so `last_seq = conflicting seq − 1`.
 
 `CaptureLimits` (frozen dataclass, all fields keyword, validated): `queue_size=10000`, `max_pending=100000`,
 `gap_wait_ms=200`, `gap_timeout_s=10.0`, `max_rest_pages_per_gap=10`, `rest_min_interval_s=0.35`
@@ -94,6 +98,7 @@ exists). While capturing, files carry the suffix `.part`; sealing renames them. 
 | `raw_ws.jsonl` | WebSocket text message as received | `conn`, `n` (0-based, session-wide), `read_wall_ns`, `read_perf_ns`, `queue_depth`, `text` |
 | `raw_rest.jsonl` | REST response | `n`, `kind` (`aggTrades`/`time`), `url`, `status`, `t0_wall_ns`, `t0_perf_ns`, `t1_wall_ns`, `t1_perf_ns`, `body` (text, or `null` on transport error), `error` (string or `null`) |
 | `clock.jsonl` | successful time sample | `t0_wall_ns`, `t0_perf_ns`, `venue_ms`, `t1_wall_ns`, `t1_perf_ns` |
+| `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest) |
 | `SESSION_MANIFEST.json` | — | below; written last, atomically |
 
 Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing.
@@ -102,17 +107,18 @@ Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing
 (the 4 scope fields), `software_version`, `started_utc`, `sealed_utc`, `sealed_by` (`capture`/`recovery`),
 `first_seq`, `last_seq` (both `null` when empty), `event_count`, `previous` (`null` or `{session_id, last_seq,
 manifest_sha256}`), `chain` (`FIRST` without previous, `CONTIGUOUS` when `first_seq == previous.last_seq + 1` or
-the session is empty), `stop_reason`, `files` (`{name: {bytes, sha256, lines}}` for the four data files),
+the session is empty), `stop_reason`, `stop_detail` (human-readable cause, may be empty), `files` (`{name: {bytes, sha256, lines}}` for the four data files),
 `counts` (`ws_messages`, `ws_duplicates`, `rest_pages`, `rest_records`, `rest_duplicates`, `text_variants`,
 `before_anchor`, `connections`, `reconnects`, `clock_samples`, `gaps_repaired`), `endpoints` (`ws`, `rest`),
-`public_network`, `limits`, and for recovery `recovered_from` (`{name.part: {bytes, sha256}}`).
+`public_network`, `limits`, `capture_start_sha256`, and for recovery `recovered_from`
+(`{name.part: {bytes, sha256}}`; counts that cannot be derived from the files are `null`).
 
 The return value of `capture_session` is the manifest plus `session_dir`.
 
 ## 5. Verification (read-only)
 
 `verify_session(session_dir, *, previous=None) -> dict` with `status` `VERIFIED` or `INVALID`, `issue_counts`
-(code → count) and `metrics`. It never creates or changes a file. Codes:
+(code → count, notices included, as in `audit-e2e-archive`), `notice_codes` and `metrics`. It never creates or changes a file. Codes:
 
 | Code | Condition |
 |---|---|
@@ -124,10 +130,11 @@ The return value of `capture_session` is the manifest plus `session_dir`.
 | `EVENT_WITHOUT_RAW_EVIDENCE` | no `raw_ws` message or `raw_rest` aggTrades record with that `a` that is identical (§2) |
 | `RAW_CONFLICT` | a raw record with `a` in `[first_seq, last_seq]` not identical to the event |
 | `RAW_UNPARSEABLE` | a raw line is not valid JSON of the documented shape |
-| `CHAIN_MISMATCH` | with `previous`: its manifest SHA-256 / id / last_seq differ from `previous` in the manifest, or `chain` is wrong |
+| `CHAIN_MISMATCH` | `chain` incoherent with the recorded `previous` (`FIRST` with a previous, `CONTIGUOUS` without, `first_seq ≠ previous.last_seq + 1`); with `previous`: it is not `VERIFIED`, or its manifest SHA-256 / id / last_seq differ from the recorded link |
 
-Notices (do not change the status): `LEFTOVER_PART_FILE` (a `.part` file kept after recovery), raw messages that
-are not aggTrades of this symbol after the last event (they caused the stop and are evidence).
+Notices (counted, do not change the status): `LEFTOVER_PART_FILE` (a `.part` file kept after recovery),
+`RAW_STOP_MESSAGE` (the last raw message or page is not a valid aggTrade record and the session stopped with
+`FORMAT_ERROR` or was recovered: it caused the stop and is kept as evidence).
 
 ## 6. Recovery of an unsealed session
 

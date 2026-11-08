@@ -1,0 +1,379 @@
+"""Live capture engine (docs/LIVE_CAPTURE.md §3): reader thread -> bounded queue -> validating writer -> sealed session."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, fields
+import queue
+import random
+import threading
+import time
+from pathlib import Path
+
+from .. import __version__
+from .endpoints import resolve
+from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
+from .rest import RateLimited, RestClient
+from .session import START, START_SCHEMA, SessionFiles, create_session_dir, previous_link, utc_iso, write_new_json
+from .wsclient import ConnectionClosed, WebSocket, WebSocketError
+
+
+@dataclass(frozen=True, kw_only=True)
+class CaptureLimits:
+    queue_size: int = 10000
+    max_pending: int = 100000
+    gap_wait_ms: int = 200
+    gap_timeout_s: float = 10.0
+    max_rest_pages_per_gap: int = 10
+    rest_min_interval_s: float = 0.35
+    max_reconnects: int = 5
+    ws_read_timeout_s: float = 30.0
+    max_message_bytes: int = 1048576
+    max_rest_body_bytes: int = 2097152
+    clock_interval_s: float = 60.0
+    fsync_every: int = 256
+
+    def __post_init__(self):
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if field.type in (int, 'int'):
+                ok = type(value) is int and (value >= 0 if field.name in ('gap_wait_ms', 'max_reconnects') else value >= 1)
+            else:
+                ok = type(value) in (int, float) and value >= 0 and (field.name == 'rest_min_interval_s' or value > 0)
+            if not ok:
+                raise ValueError(f'CaptureLimits.{field.name} has an invalid value: {value!r}')
+
+
+class _Stop(Exception):
+    def __init__(self, reason, detail=''):
+        super().__init__(f'{reason}: {detail}')
+        self.reason, self.detail = reason, detail
+
+
+def _reader(ws, items, overflow, stop, conn):
+    """Read messages; stamp them immediately after the read; never drop one."""
+    while not stop.is_set():
+        try:
+            text = ws.recv()
+        except ConnectionClosed as exc:
+            item = ('closed', conn, str(exc))
+        except WebSocketError as exc:
+            item = ('protocol', conn, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive: surface any reader failure
+            item = ('protocol', conn, f'{type(exc).__name__}: {exc}')
+        else:
+            wall, perf = time.time_ns(), time.perf_counter_ns()
+            depth = items.qsize()
+            try:
+                items.put_nowait(('msg', conn, text, wall, perf, depth))
+            except queue.Full:
+                overflow.set()
+                return
+            continue
+        try:
+            items.put_nowait(item)
+        except queue.Full:
+            overflow.set()
+        return
+
+
+class _Capture:
+    def __init__(self, directory, *, symbol, endpoints, limits, max_events, max_seconds, previous):
+        self.dir, self.symbol, self.endpoints, self.limits = directory, symbol, endpoints, limits
+        self.max_events, self.max_seconds = max_events, max_seconds
+        self.previous_link, self.previous = previous
+        self.files = SessionFiles(directory)
+        self.rest = RestClient(endpoints.rest, symbol=symbol, recorder=self._record_rest,
+                               min_interval_s=limits.rest_min_interval_s, max_body_bytes=limits.max_rest_body_bytes)
+        self.counts = dict.fromkeys(('ws_messages', 'ws_duplicates', 'rest_pages', 'rest_records', 'rest_duplicates',
+                                     'text_variants', 'before_anchor', 'connections', 'reconnects', 'clock_samples',
+                                     'gaps_repaired'), 0)
+        self.written = {}
+        self.offsets = {}
+        self.conflict_seq = None
+        self.pending = {}
+        self.first_seq = self.expected = None
+        if self.previous_link:
+            self.first_seq = self.expected = self.previous_link['last_seq'] + 1
+        self.gap_since = None
+        self.gap_pages = 0
+        self.catch_up = None
+        self.ws_n = self.rest_n = 0
+        self.unsynced = 0
+        self.last_clock = None
+
+    # -- recording -------------------------------------------------------------------------------
+    def _record_rest(self, record):
+        self.files.append('raw_rest.jsonl', {'n': self.rest_n, **record})
+        self.rest_n += 1
+
+    def _clock_sample(self):
+        self.last_clock = time.perf_counter()
+        status, body, stamps = self.rest.server_time()
+        if status != 200 or body is None:
+            return
+        try:
+            obj = loads(body)
+            venue_ms = obj['serverTime'] if isinstance(obj, dict) else None
+        except FormatError:
+            return
+        if type(venue_ms) is int and venue_ms >= 0 and stamps['t1_wall_ns'] >= stamps['t0_wall_ns']:
+            self.files.append('clock.jsonl', {'t0_wall_ns': stamps['t0_wall_ns'], 't0_perf_ns': stamps['t0_perf_ns'],
+                                              'venue_ms': venue_ms, 't1_wall_ns': stamps['t1_wall_ns'],
+                                              't1_perf_ns': stamps['t1_perf_ns']})
+            self.counts['clock_samples'] += 1
+
+    # -- sequencing ------------------------------------------------------------------------------
+    def _write(self, event):
+        self.offsets[event['source_seq']] = self.files.handles['events.jsonl'].tell()
+        self.files.append('events.jsonl', event)
+        self.written[event['source_seq']] = event
+        self.expected = event['source_seq'] + 1
+        self.unsynced += 1
+        if self.unsynced >= self.limits.fsync_every:
+            self.files.sync()
+            self.unsynced = 0
+        if len(self.written) >= self.max_events:
+            raise _Stop('MAX_EVENTS')
+
+    def _same(self, kept, event, origin):
+        verdict = compare(kept, event)
+        if verdict == 'conflict':
+            self.conflict_seq = event['source_seq']
+            raise _Stop('HALTED_CONFLICT', f'seq {event["source_seq"]} delivered with different content ({origin})')
+        if verdict == 'text_variant':
+            self.counts['text_variants'] += 1
+        self.counts['ws_duplicates' if origin == 'ws' else 'rest_duplicates'] += 1
+
+    def _accept(self, record, origin):
+        event = core_event(record, self.symbol)
+        seq = record['a']
+        if self.first_seq is None:
+            self.first_seq = self.expected = seq
+        if seq < self.first_seq:
+            self.counts['before_anchor'] += 1
+            return
+        if seq < self.expected:
+            return self._same(self.written[seq], event, origin)
+        if seq > self.expected:
+            if seq in self.pending:
+                return self._same(self.pending[seq], event, origin)
+            if len(self.pending) >= self.limits.max_pending:
+                raise _Stop('PENDING_OVERFLOW', f'{len(self.pending)} buffered events')
+            self.pending[seq] = event
+            if self.gap_since is None:
+                self.gap_since = time.perf_counter()
+                self.gap_pages = 0
+            return
+        self._write(event)
+        if self.gap_since is not None and self.expected in self.pending:
+            self.counts['gaps_repaired'] += 1   # the hole below the buffered records is filled
+        while self.expected in self.pending:
+            self._write(self.pending.pop(self.expected))
+        if self.gap_since is not None:
+            # another hole may remain above: its timer and page budget start now
+            self.gap_since = time.perf_counter() if self.pending else None
+            self.gap_pages = 0
+
+    def _rest_page(self, limit):
+        """One REST request from ``expected``; processes the records. Returns the number of records."""
+        start = self.expected
+        status, body, _ = self.rest.agg_trades(start, limit)
+        self.counts['rest_pages'] += 1
+        if status != 200 or body is None:
+            return 0
+        page = parse_rest_page(body)
+        for offset, record in enumerate(page):
+            if record['a'] != start + offset:
+                raise _Stop('FORMAT_ERROR', f'REST page from {start} is not consecutive at position {offset}')
+        for record in page:
+            self.counts['rest_records'] += 1
+            self._accept(record, 'rest')
+        return len(page)
+
+    def _request_catch_up(self):
+        """Ask REST from ``expected`` once ``gap_wait_ms`` from now, unless WS advances or opens a gap first."""
+        if self.expected is not None:
+            self.catch_up = (time.perf_counter(), self.expected)
+
+    def _repair(self):
+        if self.gap_since is None:
+            if self.catch_up is not None:
+                since, start = self.catch_up
+                if self.expected != start:
+                    self.catch_up = None   # WS delivered the continuation itself
+                elif (time.perf_counter() - since) * 1000 >= self.limits.gap_wait_ms and self.rest.ready():
+                    self.catch_up = None
+                    self._rest_page(1000)
+            return
+        self.catch_up = None   # a known gap is repaired by the gap rule
+        open_s = time.perf_counter() - self.gap_since
+        if open_s >= self.limits.gap_timeout_s:
+            raise _Stop('GAP_BLOCKED', f'gap at {self.expected} open for {open_s:.1f} s')
+        if open_s * 1000 < self.limits.gap_wait_ms or not self.rest.ready():
+            return
+        if self.gap_pages >= self.limits.max_rest_pages_per_gap:
+            raise _Stop('GAP_BLOCKED', f'gap at {self.expected} not repaired by {self.gap_pages} REST pages')
+        self.gap_pages += 1
+        self._rest_page(min(1000, min(self.pending) - self.expected))
+
+    # -- main loop -------------------------------------------------------------------------------
+    def _connect(self, attempt):
+        path = f'/ws/{self.symbol.lower()}@aggTrade'
+        return WebSocket.connect(self.endpoints.ws, path, timeout=self.limits.ws_read_timeout_s,
+                                 max_message=self.limits.max_message_bytes)
+
+    def _backoff(self, k, deadline):
+        delay = min(8.0, 0.5 * 2 ** k) * random.uniform(0.9, 1.1)
+        end = min(time.perf_counter() + delay, deadline)
+        while time.perf_counter() < end:
+            self._repair()
+            time.sleep(min(0.05, max(0.0, end - time.perf_counter())))
+
+    def _consume(self, ws, items, overflow, deadline):
+        while True:
+            now = time.perf_counter()
+            if now >= deadline:
+                raise _Stop('MAX_SECONDS')
+            if overflow.is_set():
+                raise _Stop('READER_OVERFLOW', f'queue of {self.limits.queue_size} messages full')
+            if self.last_clock is not None and now - self.last_clock >= self.limits.clock_interval_s:
+                self._clock_sample()
+            self._repair()
+            try:
+                item = items.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            kind = item[0]
+            if kind == 'closed':
+                return item[2]
+            if kind == 'protocol':
+                raise _Stop('FORMAT_ERROR', item[2])
+            _, conn, text, wall, perf, depth = item
+            self.files.append('raw_ws.jsonl', {'conn': conn, 'n': self.ws_n, 'read_wall_ns': wall,
+                                               'read_perf_ns': perf, 'queue_depth': depth, 'text': text})
+            self.ws_n += 1
+            self.counts['ws_messages'] += 1
+            try:
+                record = parse_ws(text, self.symbol)
+            except FormatError as exc:
+                raise _Stop('FORMAT_ERROR', str(exc)) from None
+            self._accept(record, 'ws')
+
+    def run(self):
+        try:
+            return self._run()
+        except BaseException:
+            self.files.close()   # unsealed: recoverable with seal_session; never leave handles open (Windows)
+            raise
+
+    def _run(self):
+        started = time.perf_counter()
+        deadline = started + self.max_seconds
+        stop_reason, detail = None, ''
+        ws = reader = None
+        stop_reader = threading.Event()
+        try:
+            self._clock_sample()
+            attempt = 0
+            while True:
+                if time.perf_counter() >= deadline:
+                    raise _Stop('MAX_SECONDS')
+                try:
+                    ws = self._connect(attempt)
+                except WebSocketError as exc:
+                    raise _Stop('FORMAT_ERROR', f'handshake: {exc}') from None
+                except ConnectionClosed as exc:
+                    if attempt >= self.limits.max_reconnects:
+                        raise _Stop('CONNECTION_FAILED', str(exc)) from None
+                    self._backoff(attempt, deadline)
+                    attempt += 1
+                    self.counts['reconnects'] += 1
+                    continue
+                self.counts['connections'] += 1
+                if self.counts['connections'] > 1 or self.previous_link:
+                    self._request_catch_up()   # after the WS is connected: REST then covers up to its start
+                items, overflow = queue.Queue(maxsize=self.limits.queue_size), threading.Event()
+                stop_reader = threading.Event()
+                reader = threading.Thread(target=_reader, args=(ws, items, overflow, stop_reader,
+                                                                self.counts['connections']), daemon=True)
+                reader.start()
+                reason = self._consume(ws, items, overflow, deadline)
+                stop_reader.set()
+                ws.close()
+                reader.join(10)
+                ws = reader = None
+                if attempt >= self.limits.max_reconnects:
+                    raise _Stop('CONNECTION_FAILED', reason)
+                self._backoff(attempt, deadline)
+                attempt += 1
+                self.counts['reconnects'] += 1
+        except _Stop as stop:
+            stop_reason, detail = stop.reason, stop.detail
+        except RateLimited as exc:
+            stop_reason, detail = 'RATE_LIMITED', str(exc)
+        except FormatError as exc:
+            stop_reason, detail = 'FORMAT_ERROR', str(exc)
+        except KeyboardInterrupt:
+            stop_reason, detail = 'INTERRUPTED', 'KeyboardInterrupt'
+        finally:
+            stop_reader.set()
+            if ws is not None:
+                ws.close()
+            if reader is not None:
+                reader.join(10)
+        if stop_reason != 'RATE_LIMITED':
+            try:
+                self._clock_sample()
+            except RateLimited:
+                pass
+        if self.conflict_seq is not None and self.conflict_seq in self.offsets:
+            # The venue delivered two contents for an already written seq: that seq and everything after it are
+            # ambiguous. Our own unsealed file is cut back before it (the raw evidence keeps both deliveries).
+            handle = self.files.handles['events.jsonl']
+            handle.flush()
+            handle.truncate(self.offsets[self.conflict_seq])
+            handle.seek(0, 2)
+            for seq in [s for s in self.written if s >= self.conflict_seq]:
+                del self.written[seq]
+            self.files.lines['events.jsonl'] = len(self.written)
+        events = sorted(self.written)
+        manifest = self.files.seal({
+            'symbol': self.symbol, 'lane': lane(self.symbol), 'started_utc': self.started_utc, 'sealed_by': 'capture',
+            'first_seq': events[0] if events else None, 'last_seq': events[-1] if events else None,
+            'event_count': len(events), 'previous': self.previous_link,
+            'chain': 'CONTIGUOUS' if self.previous_link else 'FIRST', 'stop_reason': stop_reason,
+            'stop_detail': detail,
+            'counts': self.counts, 'endpoints': {'ws': self.endpoints.ws.base, 'rest': self.endpoints.rest.base},
+            'public_network': self.endpoints.public, 'limits': asdict(self.limits)})
+        return {**manifest, 'session_dir': str(self.dir)}
+
+
+def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_network=False, max_events=10000,
+                    max_seconds=600.0, previous_session=None, limits=None):
+    """Capture public aggTrades into a new sealed session directory (docs/LIVE_CAPTURE.md)."""
+    check_symbol(symbol)
+    limits = CaptureLimits() if limits is None else limits
+    if not isinstance(limits, CaptureLimits):
+        raise ValueError('limits must be a CaptureLimits')
+    if type(max_events) is not int or max_events < 1:
+        raise ValueError('max_events must be a positive integer')
+    if type(max_seconds) not in (int, float) or not max_seconds > 0:
+        raise ValueError('max_seconds must be a positive number')
+    endpoints = resolve(ws_url, rest_url, public_network)
+    if endpoints.public and limits.rest_min_interval_s < 0.1:
+        raise ValueError('rest_min_interval_s must be at least 0.1 against the public venue')
+    link = previous = None
+    if previous_session is not None:
+        link, previous = previous_link(previous_session)
+        if previous['symbol'] != symbol:
+            raise ValueError('previous session has another symbol')
+    directory = create_session_dir(capture_dir, symbol)
+    started_utc = utc_iso()
+    write_new_json(Path(directory) / START, {
+        'schema': START_SCHEMA, 'symbol': symbol, 'lane': lane(symbol), 'started_utc': started_utc,
+        'software_version': __version__,
+        'endpoints': {'ws': endpoints.ws.base, 'rest': endpoints.rest.base}, 'public_network': endpoints.public,
+        'limits': asdict(limits), 'max_events': max_events, 'max_seconds': max_seconds, 'previous': link})
+    capture = _Capture(directory, symbol=symbol, endpoints=endpoints, limits=limits, max_events=max_events,
+                       max_seconds=max_seconds, previous=(link, previous))
+    capture.started_utc = started_utc
+    return capture.run()

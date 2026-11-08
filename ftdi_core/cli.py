@@ -18,6 +18,7 @@ from .timeprov import analyze_pilot_db
 from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate_consumer
 from .producer_retention import archive_producer
 from .storage_maintenance import vacuum_db
+from .live import NORMAL_STOPS, capture_session, seal_session, verify_session
 
 
 def _resolve_lane(args):
@@ -93,6 +94,23 @@ def main(argv=None) -> int:
     w.add_argument('--limit',type=int,default=20000,help='At most this many events in this run (default 20000)')
     w.add_argument('--chunk',type=int,default=20000,help='Events per archive segment, 1..20000')
     w.add_argument('--apply',action='store_true',help='Perform the archive (default: dry run, writes nothing)')
+    lc = sub.add_parser('live-capture',
+                        help='Read-only capture of public aggTrades into a sealed session (loopback unless --public-network)')
+    lc.add_argument('--symbol',required=True)
+    lc.add_argument('--capture-dir',type=Path,required=True)
+    lc.add_argument('--public-network',action='store_true',
+                    help='Connect to the fixed public Binance market-data endpoints (no key, read-only)')
+    lc.add_argument('--ws-url',help='Loopback only: ws://127.0.0.1:<port>')
+    lc.add_argument('--rest-url',help='Loopback only: http://127.0.0.1:<port>')
+    lc.add_argument('--max-events',type=int,default=10000)
+    lc.add_argument('--max-seconds',type=float,default=600.0)
+    lc.add_argument('--previous-session',type=Path)
+    vs = sub.add_parser('verify-session',help='Read-only verification of a sealed live session')
+    vs.add_argument('--session',type=Path,required=True)
+    vs.add_argument('--previous',type=Path)
+    ss = sub.add_parser('seal-session',help='Seal a killed capture from its complete lines; dry run unless --apply')
+    ss.add_argument('--session',type=Path,required=True)
+    ss.add_argument('--apply',action='store_true')
     v = sub.add_parser('vacuum-db',
                        help='Rebuild one FTDI SQLite file to reclaim space; logical content verified identical, original kept; dry run unless --apply')
     v.add_argument('--db',type=Path,required=True,help='A producer lane state.sqlite3 or a consumer effects DB')
@@ -136,6 +154,17 @@ def main(argv=None) -> int:
         elif args.cmd == 'lab-e2e':
             result = local_lab(args.outdir,args.consumer_db,batch=args.batch,max_batches=args.max_batches)
             good = result['pass']
+        elif args.cmd == 'live-capture':
+            result = capture_session(args.capture_dir,symbol=args.symbol,ws_url=args.ws_url,rest_url=args.rest_url,
+                                     public_network=args.public_network,max_events=args.max_events,
+                                     max_seconds=args.max_seconds,previous_session=args.previous_session)
+            good = result['stop_reason'] in NORMAL_STOPS
+        elif args.cmd == 'verify-session':
+            result = verify_session(args.session,previous=args.previous)
+            good = result['status'] == 'VERIFIED'
+        elif args.cmd == 'seal-session':
+            result = seal_session(args.session,apply=args.apply)
+            good = True
         elif args.cmd == 'vacuum-db':
             result = vacuum_db(args.db,apply=args.apply)
             good = True
