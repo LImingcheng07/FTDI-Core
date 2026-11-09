@@ -1,0 +1,262 @@
+{
+  "note": "Second owner-approved real-network pilot (2026-11-09), FTDI-Core v0.4.1 (commit 3fd4794, tag v0.4.1), native Windows 11, public read-only endpoints only, no key, no order. Data stays in the owner's directory; this file holds no paths.",
+  "sessions": [
+    {
+      "session_id": "session-20261109T041343Z",
+      "stop_reason": "MAX_SECONDS",
+      "first_seq": 4110203743,
+      "last_seq": 4110207889,
+      "event_count": 4147,
+      "chain": "FIRST",
+      "counts": {
+        "ws_messages": 4147,
+        "ws_duplicates": 0,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 1,
+        "reconnects": 0,
+        "clock_samples": 11,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "started_utc": "2026-11-09T04:13:43Z",
+      "software_version": "0.4.1",
+      "max_seconds": null
+    },
+    {
+      "session_id": "session-20261109T042421Z",
+      "stop_reason": "MAX_SECONDS",
+      "first_seq": 4110207890,
+      "last_seq": 4110209302,
+      "event_count": 1413,
+      "chain": "CONTIGUOUS",
+      "counts": {
+        "ws_messages": 1186,
+        "ws_duplicates": 2,
+        "rest_pages": 1,
+        "rest_records": 229,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 1,
+        "reconnects": 0,
+        "clock_samples": 3,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "started_utc": "2026-11-09T04:24:21Z",
+      "software_version": "0.4.1",
+      "max_seconds": null
+    }
+  ],
+  "chain": {
+    "first_seq": 4110203743,
+    "last_seq": 4110209302,
+    "event_count": 5560
+  },
+  "audit": {
+    "status": "COMPLETE",
+    "issue_counts": {},
+    "metrics": {
+      "expected_events_total": 5560,
+      "matched_effects": 5560,
+      "remote_missing": 0,
+      "content_conflicts": 0,
+      "duplicate_identities": 0,
+      "source_lines_anchored": 5560
+    },
+    "source_manifest": {
+      "source_kind": "LIVE_SESSION_CHAIN",
+      "jsonl_sha256_matches_computed": true
+    }
+  },
+  "latency": {
+    "session-20261109T041343Z": {
+      "status": "NO_TRUSTED_SAMPLES",
+      "samples": 4147,
+      "trusted": 0,
+      "tag_counts": {
+        "OFFSET_UNCERTAIN": 4147,
+        "QUEUED_READ": 2411
+      },
+      "latency_percentiles": {
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "events_recovered_by_rest_only": 0,
+      "clock_samples": 11,
+      "session_wall_clock": {
+        "implementation": "GetSystemTimePreciseAsFileTime()",
+        "resolution_ms": 0.0001
+      },
+      "certified": false
+    },
+    "session-20261109T042421Z": {
+      "status": "NO_TRUSTED_SAMPLES",
+      "samples": 1186,
+      "trusted": 0,
+      "tag_counts": {
+        "OFFSET_UNCERTAIN": 1186,
+        "QUEUED_READ": 691
+      },
+      "latency_percentiles": {
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "events_recovered_by_rest_only": 227,
+      "clock_samples": 3,
+      "session_wall_clock": {
+        "implementation": "GetSystemTimePreciseAsFileTime()",
+        "resolution_ms": 0.0001
+      },
+      "certified": false
+    }
+  },
+  "descriptive_untrusted": {
+    "session-20261109T041343Z": {
+      "sample_rtt_ms": {
+        "min": 42.99,
+        "median": 63.95,
+        "max": 78.78
+      },
+      "uncertainty_ms": {
+        "min": 22.5,
+        "median": 33.8,
+        "max": 41.8
+      },
+      "policy_limit_ms": 20.0,
+      "corrected_latency_ms_untrusted": {
+        "p5": 27.8,
+        "p50": 38.9,
+        "p95": 45.7,
+        "min": 26.1,
+        "max": 215.1
+      },
+      "unqueued_corrected": 1736,
+      "note": "Descriptive only: every value carries the stated uncertainty (above the policy limit); not trusted, not certified. QUEUED_READ reads excluded."
+    },
+    "session-20261109T042421Z": {
+      "sample_rtt_ms": {
+        "min": 60.9,
+        "median": 75.02,
+        "max": 81.27
+      },
+      "uncertainty_ms": {
+        "min": 31.5,
+        "median": 36.2,
+        "max": 42.5
+      },
+      "policy_limit_ms": 20.0,
+      "corrected_latency_ms_untrusted": {
+        "p5": 47.7,
+        "p50": 49.9,
+        "p95": 53.8,
+        "min": 39.6,
+        "max": 153.0
+      },
+      "unqueued_corrected": 495,
+      "note": "Descriptive only: every value carries the stated uncertainty (above the policy limit); not trusted, not certified. QUEUED_READ reads excluded."
+    }
+  },
+  "windows_time": "w32tm /query /status before and after: Leap indicator 3 (not synchronised), root dispersion 9.17 s, source ntp.aliyun.com",
+  "delivery": {
+    "events_sent": 5560,
+    "acknowledged": 5560,
+    "remote_duplicates": 0,
+    "batches": 22,
+    "pass": true
+  },
+  "clock_samples": [
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 78.26,
+      "interval_rtt_ms": 78.26,
+      "venue_minus_local_ms": 757.3
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 59.14,
+      "interval_rtt_ms": 59.14,
+      "venue_minus_local_ms": 749.6
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 42.99,
+      "interval_rtt_ms": 42.99,
+      "venue_minus_local_ms": 761.4
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 57.19,
+      "interval_rtt_ms": 57.19,
+      "venue_minus_local_ms": 771.2
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 62.28,
+      "interval_rtt_ms": 62.28,
+      "venue_minus_local_ms": 774.9
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 76.03,
+      "interval_rtt_ms": 76.03,
+      "venue_minus_local_ms": 769.2
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 78.03,
+      "interval_rtt_ms": 78.03,
+      "venue_minus_local_ms": 771.5
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 59.7,
+      "interval_rtt_ms": 59.7,
+      "venue_minus_local_ms": 765.4
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 63.95,
+      "interval_rtt_ms": 63.95,
+      "venue_minus_local_ms": 784.5
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 78.78,
+      "interval_rtt_ms": 78.78,
+      "venue_minus_local_ms": 779.8
+    },
+    {
+      "session": "20261109T041343Z",
+      "rtt_ms": 75.36,
+      "interval_rtt_ms": 75.36,
+      "venue_minus_local_ms": 781.8
+    },
+    {
+      "session": "20261109T042421Z",
+      "rtt_ms": 81.27,
+      "interval_rtt_ms": 81.27,
+      "venue_minus_local_ms": 783.5
+    },
+    {
+      "session": "20261109T042421Z",
+      "rtt_ms": 75.02,
+      "interval_rtt_ms": 75.02,
+      "venue_minus_local_ms": 787.8
+    },
+    {
+      "session": "20261109T042421Z",
+      "rtt_ms": 60.9,
+      "interval_rtt_ms": 60.9,
+      "venue_minus_local_ms": 796.3
+    }
+  ]
+}

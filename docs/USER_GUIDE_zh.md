@@ -176,6 +176,8 @@ python -m ftdi_core analyze-clock-evidence --session <段目录>
   `w32tm /query /status` 确认不是"Leap 指示器: 3"）。
 - 2026-11-08 的真实网络试采（v0.4.0）：采集、验证、拼接、投递、审计全部通过（2,480 条，审计 COMPLETE），
   但没有时延数字；原因和 v0.4.1 的修正见 `docs/REAL_LIVE_PILOT_RESULTS.md`。
+- 2026-11-09 第二次试采（v0.4.1）：5,560 条，审计 COMPLETE 且无任何提示，时钟样本往返 43–81 ms，修正全部生效；
+  仍无可信时延——到交易所的往返至少 43 ms，不确定度至少 22.5 ms，超过 20 ms 上限。见 `docs/REAL_LIVE_PILOT2_RESULTS.md`。
 
 ## 7. 时钟证据分析（Task 003）
 

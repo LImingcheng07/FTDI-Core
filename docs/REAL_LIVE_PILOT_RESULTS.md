@@ -53,4 +53,6 @@ Implemented in v0.4.1:
 * A composed chain carries a `source_manifest.json` the archive-aware audit checks (no `SOURCE_MANIFEST_ABSENT`).
 * A latency report with 0 trusted samples has status `NO_TRUSTED_SAMPLES` (this pilot, re-analysed).
 * Not changed: the Windows clock was not synchronised; a latency claim also needs a synchronised clock.
-* Next: a short second pilot with v0.4.1 (owner's decision).
+* Second pilot with v0.4.1 (2026-11-09, owner-approved): `docs/REAL_LIVE_PILOT2_RESULTS.md` — clock-sample round
+  trips 43–81 ms instead of 754–1,693 ms, no `WALL_CLOCK_STEP`, audit COMPLETE without notices; still no trusted
+  latency (best offset uncertainty 22.5 ms against the 20 ms limit).
