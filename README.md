@@ -84,7 +84,9 @@ precondition error (`FTDI_CORE_FAIL_CLOSED: ...` on stderr).
   limit cannot be met from here, whatever the sampling rate.
 * **First trusted latency estimate**, on the owner's Linux cloud server (10,870 events, audit COMPLETE on Linux):
   `ESTIMATED`, 1,147 trusted reads, P50 18.5 ms / P95 19.7 ms / P99 20.0 ms, each ± up to 20 ms; an independent check
-  with the NTP-disciplined host clock gives P50 19.5 ms — `docs/REAL_LIVE_REMOTE_RESULTS.md`. Not certified.
+  with the NTP-disciplined host clock gives P50 19.5 ms — `docs/REAL_LIVE_REMOTE_RESULTS.md`. Not certified. A
+  one-hour capture there in the evening (54,438 events, audit COMPLETE): P50 35.4 ms (independent check
+  36.56 ms), stable over the hour; the difference is the network path each connection gets.
 
 All timings are local process times, **not** exchange-to-user latency. Source market data are not included.
 

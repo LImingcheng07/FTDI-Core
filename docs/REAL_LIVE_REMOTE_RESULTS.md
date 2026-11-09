@@ -1,4 +1,4 @@
-# Real-network capture on a Linux cloud server (2026-11-09)
+# Real-network captures on a Linux cloud server (2026-11-09)
 
 Owner-provided Linux cloud server (Ubuntu 24.04.5 LTS, Python 3.12.3, 4 vCPU; other services running), released
 FTDI-Core v0.4.1 package (verified against its manifest on the host, 149/149 files), started through the Python API
@@ -39,6 +39,46 @@ user's home directory. Summary without host address or paths: `examples/REAL_LIV
 In short: **from this host, venue event time to the read in the capture process is about 18–20 ms**, with an
 absolute uncertainty of up to ±20 ms that two independent methods agree within. Not certified; a research estimate
 with its evidence.
+
+
+## Second capture: one hour in the evening (2026-11-09 22:00–23:00, owner-approved)
+
+Released v0.4.2 package on the same host, started with the CLI:
+`live-capture --symbol BTCUSDT --public-network --max-seconds 3600 --max-events 1000000 --clock-interval-s 5`.
+Copy on the owner's PC: `C:\ftdi\remote_tx106_1h`; summary `examples/REAL_LIVE_REMOTE_1H_EVIDENCE.json`.
+
+| | Result |
+|---|---|
+| Capture | `MAX_SECONDS`, **54,438 events** `4110589237..4110643674`, contiguous, 0 gaps, 1 connection, 0 reconnects, 718 clock samples |
+| `verify-session`; compose → replay → lab-e2e → `audit-e2e-archive` (on the host) | **VERIFIED**; 54,438 sent / acknowledged, 0 duplicates; audit **COMPLETE**, 54,438 / 54,438, no issue |
+| Latency report (released policy) | **`ESTIMATED`**: 955 trusted reads of 54,438; **P50 35.4 ms, P95 37.1 ms**; P99 withheld (needs 1,000 trusted reads) |
+| Independent check (NTP-disciplined host clock, uncorrected, 21,033 unqueued reads) | P50 36.56 ms, P5–P99 36.43–38.05 ms |
+
+Stable over the hour, also through the busy second half (3–5 times more trades):
+
+| Window (min) | Reads | Trusted | Trusted P50 (ms) | Independent P50 (ms) |
+|---|---:|---:|---:|---:|
+| 0-10 min | 4,796 | 26 | 35.37 | 36.6 |
+| 10-20 min | 3,690 | 107 | 35.49 | 36.55 |
+| 20-30 min | 3,507 | 33 | 35.42 | 36.54 |
+| 30-40 min | 15,310 | 63 | 36.17 | 36.56 |
+| 40-50 min | 16,848 | 629 | 35.14 | 36.58 |
+| 50-60 min | 10,287 | 97 | 36.89 | 36.55 |
+
+**Why the evening figure (≈ 36 ms) is twice the afternoon one (≈ 19 ms).** Both methods agree within about 1 ms in
+both captures, so the difference is real, not a measurement artefact. A connect-time probe from the host to every
+address of both public hosts found three discrete levels — about 35, 51 and 67 ms — for every address, changing
+from one connection to the next. The most likely explanation: each TCP connection takes one of several
+network paths and keeps it. The
+afternoon WebSocket connection had a fast path (one-way ≈ 19 ms), the evening one a path about 17 ms slower, for
+its whole lifetime. The clock samples, each on a new connection, show the same levels (round trips here:
+16 near 36 ms, 195 near 52 ms, 489 near 67 ms, 18 slower), and only the fast ones
+can be trusted under the 20 ms limit.
+
+So **venue-to-host latency from this host is about 19 ms or about 36 ms depending on the path the WebSocket
+connection gets**, each with an uncertainty of up to ±20 ms. A capture that wants the fast path could open the
+stream, check its delivery delay against the clock samples, and reconnect while it is slow; not implemented (an
+operational choice for the owner).
 
 ## Found on the way: first run on Linux
 

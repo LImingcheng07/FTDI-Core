@@ -48,7 +48,7 @@ You are working on FTDI-Core v0.4.2 (Python 3.10+, stdlib-only research prototyp
 **v0.4.2 released 2026-11-09** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, `v0.4.1`, `v0.4.2`, local only). v0.4.2: Linux verified
 (Ubuntu 24.04 on the owner's cloud server: suites, live loopback acceptance, real-network capture with the first
 trusted latency estimate, `docs/REAL_LIVE_REMOTE_RESULTS.md`); fixes from the first Linux run (truncated REST body,
-raw files unbuffered); `live-capture --clock-interval-s`. The server's session copy is in `C:\ftdi\remote_tx106`
+raw files unbuffered); `live-capture --clock-interval-s`. The server's session copies are in `C:\ftdi\remote_tx106` and `C:\ftdi\remote_tx106_1h` (1-hour evening capture: P50 ≈ 35 ms vs ≈ 18.5 ms in the afternoon — per-connection network path)
 (owner's data). The server is the owner's: use it only with the owner's consent, never store its address or key in
 the repository. v0.4.1 fixes the live clock
 evidence found by the owner-approved real-network pilot (`docs/REAL_LIVE_PILOT_RESULTS.md`, `RELEASE_NOTES_v0.4.1.md`):

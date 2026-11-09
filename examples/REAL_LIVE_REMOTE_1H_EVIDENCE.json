@@ -1,0 +1,169 @@
+{
+  "note": "Second capture on the owner's Linux cloud server: 1 hour, 2026-11-09 21:59:48-23:00:05 +08:00, released FTDI-Core v0.4.2 package through the CLI (--clock-interval-s 5); public read-only endpoints, no key, no order. Session copied to the owner's PC; no host address or path here.",
+  "session": {
+    "session_id": "session-20261109T135948Z",
+    "stop_reason": "MAX_SECONDS",
+    "first_seq": 4110589237,
+    "last_seq": 4110643674,
+    "event_count": 54438,
+    "counts": {
+      "before_anchor": 0,
+      "clock_samples": 718,
+      "connections": 1,
+      "gaps_repaired": 0,
+      "reconnects": 0,
+      "rest_duplicates": 0,
+      "rest_pages": 0,
+      "rest_records": 0,
+      "text_variants": 0,
+      "ws_duplicates": 0,
+      "ws_messages": 54438
+    },
+    "software_version": "0.4.2",
+    "verify_on_host": "VERIFIED"
+  },
+  "pipeline_on_host": {
+    "delivery": {
+      "events_sent": 54438,
+      "acknowledged": 54438,
+      "remote_duplicates": 0
+    },
+    "audit": "COMPLETE",
+    "audit_issue_counts": {},
+    "matched": 54438,
+    "expected": 54438
+  },
+  "clock_samples": {
+    "count": 718,
+    "rtt_ms": {
+      "min": 36.0,
+      "median": 69.99,
+      "max": 346.86
+    },
+    "rtt_levels": {
+      "about 36 ms": 16,
+      "about 52 ms": 195,
+      "about 67 ms": 489,
+      "slower": 18
+    },
+    "below_38_ms": 14
+  },
+  "latency_released_policy": {
+    "status": "ESTIMATED",
+    "samples": 54438,
+    "trusted": 955,
+    "tag_counts": {
+      "OFFSET_UNCERTAIN": 51549,
+      "QUEUED_READ": 33405
+    },
+    "latency_percentiles": {
+      "p50_ms": 35.352,
+      "p95_ms": 37.077,
+      "p99_ms": "insufficient samples (need 1000 trusted)"
+    },
+    "max_included_uncertainty_ms": 19.998,
+    "certified": false
+  },
+  "cross_check": {
+    "trusted_corrected_latency_ms": {
+      "p5": 34.75,
+      "p50": 35.35,
+      "p95": 37.08,
+      "p99": 37.95
+    },
+    "trusted_uncertainty_ms": {
+      "p0": 19.01,
+      "p50": 19.62,
+      "p100": 20.0
+    },
+    "unqueued_reads": 21033,
+    "unqueued_raw_delta_ms_no_correction": {
+      "p5": 36.43,
+      "p50": 36.56,
+      "p95": 37.66,
+      "p99": 38.05
+    },
+    "venue_minus_server_ms_16_fastest_samples": {
+      "median": -1.0,
+      "half_rtt_ms_range": [
+        18.0,
+        19.2
+      ]
+    }
+  },
+  "windows_10_min": [
+    {
+      "window": "0-10 min",
+      "reads": 4796,
+      "trusted": 26,
+      "trusted_p50_ms": 35.37,
+      "trusted_p95_ms": 36.39,
+      "trusted_uncertainty_p50_ms": 19.75,
+      "unqueued_raw_p50_ms": 36.6,
+      "samples": 119,
+      "sample_rtt_min_ms": 37.2,
+      "samples_below_38_ms": 1
+    },
+    {
+      "window": "10-20 min",
+      "reads": 3690,
+      "trusted": 107,
+      "trusted_p50_ms": 35.49,
+      "trusted_p95_ms": 36.51,
+      "trusted_uncertainty_p50_ms": 19.64,
+      "unqueued_raw_p50_ms": 36.55,
+      "samples": 119,
+      "sample_rtt_min_ms": 36.0,
+      "samples_below_38_ms": 3
+    },
+    {
+      "window": "20-30 min",
+      "reads": 3507,
+      "trusted": 33,
+      "trusted_p50_ms": 35.42,
+      "trusted_p95_ms": 36.57,
+      "trusted_uncertainty_p50_ms": 19.69,
+      "unqueued_raw_p50_ms": 36.54,
+      "samples": 120,
+      "sample_rtt_min_ms": 36.7,
+      "samples_below_38_ms": 2
+    },
+    {
+      "window": "30-40 min",
+      "reads": 15310,
+      "trusted": 63,
+      "trusted_p50_ms": 36.17,
+      "trusted_p95_ms": 37.27,
+      "trusted_uncertainty_p50_ms": 19.87,
+      "unqueued_raw_p50_ms": 36.56,
+      "samples": 119,
+      "sample_rtt_min_ms": 37.3,
+      "samples_below_38_ms": 2
+    },
+    {
+      "window": "40-50 min",
+      "reads": 16848,
+      "trusted": 629,
+      "trusted_p50_ms": 35.14,
+      "trusted_p95_ms": 36.63,
+      "trusted_uncertainty_p50_ms": 19.56,
+      "unqueued_raw_p50_ms": 36.58,
+      "samples": 120,
+      "sample_rtt_min_ms": 36.0,
+      "samples_below_38_ms": 4
+    },
+    {
+      "window": "50-60 min",
+      "reads": 10287,
+      "trusted": 97,
+      "trusted_p50_ms": 36.89,
+      "trusted_p95_ms": 37.95,
+      "trusted_uncertainty_p50_ms": 19.82,
+      "unqueued_raw_p50_ms": 36.55,
+      "samples": 120,
+      "sample_rtt_min_ms": 37.1,
+      "samples_below_38_ms": 2
+    }
+  ],
+  "connect_probe": "TCP connect to every address of data-stream and data-api.binance.vision from the host, twice, 5 connects per address (2026-11-10): times fall into three levels of about 35, 51 and 67 ms for every address; the level changes from connection to connection, not with the address"
+}
