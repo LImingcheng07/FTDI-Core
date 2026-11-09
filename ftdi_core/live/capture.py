@@ -11,7 +11,7 @@ from pathlib import Path
 from .. import __version__
 from .endpoints import resolve
 from .clocks import INTERVAL_CLOCK, WALL_CLOCK, stamp_pair
-from .limits import CaptureLimits
+from .limits import PUBLIC_MIN_CLOCK_INTERVAL_S, CaptureLimits
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
 from .rest import RateLimited, RestClient, UnusableBody
 from .session import (MAX_INT64, START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
@@ -407,6 +407,8 @@ def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_n
     endpoints = resolve(ws_url, rest_url, public_network)
     if endpoints.public and limits.rest_min_interval_s < 0.1:
         raise ValueError('rest_min_interval_s must be at least 0.1 against the public venue')
+    if endpoints.public and limits.clock_interval_s < PUBLIC_MIN_CLOCK_INTERVAL_S:
+        raise ValueError(f'clock_interval_s must be at least {PUBLIC_MIN_CLOCK_INTERVAL_S} against the public venue')
     link = previous = None
     if previous_session is not None:
         link, previous = previous_link(previous_session)

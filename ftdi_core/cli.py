@@ -18,7 +18,7 @@ from .timeprov import analyze_pilot_db
 from .consumer_retention import compact_consumer, migrate_consumer_v2, rehydrate_consumer
 from .producer_retention import archive_producer
 from .storage_maintenance import vacuum_db
-from .live import NORMAL_STOPS, capture_session, seal_session, verify_session
+from .live import NORMAL_STOPS, CaptureLimits, capture_session, seal_session, verify_session
 from .live.compose import compose_sessions
 from .live.latency import analyze_session
 
@@ -107,6 +107,9 @@ def main(argv=None) -> int:
     lc.add_argument('--max-events',type=int,default=10000)
     lc.add_argument('--max-seconds',type=float,default=600.0)
     lc.add_argument('--previous-session',type=Path)
+    lc.add_argument('--clock-interval-s',type=float,default=60.0,
+                    help='Seconds between server-time clock samples (default 60; at least 1 with --public-network). '
+                         'More samples make a fast round trip, and so a small offset uncertainty, more likely')
     vs = sub.add_parser('verify-session',help='Read-only verification of a sealed live session')
     vs.add_argument('--session',type=Path,required=True)
     vs.add_argument('--previous',type=Path)
@@ -165,7 +168,8 @@ def main(argv=None) -> int:
         elif args.cmd == 'live-capture':
             result = capture_session(args.capture_dir,symbol=args.symbol,ws_url=args.ws_url,rest_url=args.rest_url,
                                      public_network=args.public_network,max_events=args.max_events,
-                                     max_seconds=args.max_seconds,previous_session=args.previous_session)
+                                     max_seconds=args.max_seconds,previous_session=args.previous_session,
+                                     limits=CaptureLimits(clock_interval_s=args.clock_interval_s))
             good = result['stop_reason'] in NORMAL_STOPS
         elif args.cmd == 'verify-session':
             result = verify_session(args.session,previous=args.previous)

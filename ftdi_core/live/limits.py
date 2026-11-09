@@ -30,6 +30,9 @@ class CaptureLimits:
                 raise ValueError(f'CaptureLimits.{field.name} has an invalid value: {value!r}')
 
 
+PUBLIC_MIN_CLOCK_INTERVAL_S = 1.0   # at most one server-time request per second against the public venue
+
+
 def limits_problem(value, public_network):
     """None if ``value`` (a manifest/start ``limits`` dict) is a valid CaptureLimits for that mode."""
     if not isinstance(value, dict) or set(value) != {f.name for f in fields(CaptureLimits)}:
@@ -40,4 +43,6 @@ def limits_problem(value, public_network):
         return f'limits: {exc}'
     if public_network and limits.rest_min_interval_s < 0.1:
         return 'limits: rest_min_interval_s below 0.1 in public mode'
+    if public_network and limits.clock_interval_s < PUBLIC_MIN_CLOCK_INTERVAL_S:
+        return f'limits: clock_interval_s below {PUBLIC_MIN_CLOCK_INTERVAL_S} in public mode'
     return None

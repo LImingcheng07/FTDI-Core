@@ -659,6 +659,31 @@ class PilotFindingTests(unittest.TestCase):
         self.assertIsNone(records[0]['body'])
         self.assertIn('IncompleteRead', records[0]['error'])
 
+    def test_p23_the_cli_sets_the_clock_interval_and_public_mode_bounds_it(self):
+        """The remote-host pilot needed samples every 5 s; the CLI had no option for it (v0.4.2)."""
+        import contextlib
+        import io
+        from ftdi_core.cli import main
+        from ftdi_core.live.limits import limits_problem
+        from dataclasses import asdict
+        with FakeVenue(connections=[[('trades', 1, 5)]]) as venue:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = main(['live-capture', '--symbol', 'BTCUSDT', '--capture-dir', str(self.base / 'c'),
+                             '--ws-url', venue.ws_url, '--rest-url', venue.rest_url, '--max-events', '5',
+                             '--max-seconds', '10', '--clock-interval-s', '2.5'])
+        self.assertEqual(code, 0)
+        session = Path(json.loads(out.getvalue())['session_dir'])
+        start = json.loads((session / 'CAPTURE_START.json').read_text(encoding='utf-8'))
+        self.assertEqual(start['limits']['clock_interval_s'], 2.5)
+        # against the public venue: at least 1 s, refused before any socket, and a session claiming less is invalid
+        with self.assertRaisesRegex(ValueError, 'clock_interval_s'):
+            capture_session(self.base / 'p', symbol='BTCUSDT', public_network=True, max_seconds=1.0,
+                            limits=CaptureLimits(clock_interval_s=0.5))
+        self.assertFalse((self.base / 'p').exists() and any((self.base / 'p').rglob('*')))
+        self.assertIsNone(limits_problem(asdict(CaptureLimits(clock_interval_s=1.0)), True))
+        self.assertIn('clock_interval_s', limits_problem(asdict(CaptureLimits(clock_interval_s=0.5)), True))
+        self.assertIsNone(limits_problem(asdict(CaptureLimits(clock_interval_s=0.5)), False))
+
 
 if __name__ == '__main__':
     unittest.main()
