@@ -684,6 +684,25 @@ class PilotFindingTests(unittest.TestCase):
         self.assertIn('clock_interval_s', limits_problem(asdict(CaptureLimits(clock_interval_s=0.5)), True))
         self.assertIsNone(limits_problem(asdict(CaptureLimits(clock_interval_s=0.5)), False))
 
+    def test_p24_raw_evidence_reaches_the_os_before_anything_derived_from_it(self):
+        """First Linux run: a capture killed between two buffer flushes left event 40 on disk without its raw
+        message (recovery correctly sealed 39). Raw files are now unbuffered: an appended raw line is in the file at
+        once, while derived files may still be buffered."""
+        from ftdi_core.live.session import SessionFiles
+        directory = self.base / 's'
+        directory.mkdir()
+        files = SessionFiles(directory)
+        try:
+            files.append('raw_ws.jsonl', {'n': 0, 'text': 'x'})
+            files.append('raw_rest.jsonl', {'n': 0, 'body': 'y'})
+            files.append('events.jsonl', {'source_seq': 1})
+            self.assertEqual((directory / 'raw_ws.jsonl.part').read_bytes().count(b'\n'), 1)
+            self.assertEqual((directory / 'raw_rest.jsonl.part').read_bytes().count(b'\n'), 1)
+            files.sync()
+            self.assertEqual((directory / 'events.jsonl.part').read_bytes().count(b'\n'), 1)
+        finally:
+            files.close()
+
 
 if __name__ == '__main__':
     unittest.main()

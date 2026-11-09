@@ -203,8 +203,16 @@ def first_conflict(events, evidence):
     return min(conflicting) if conflicting else None
 
 
+RAW_FILES = ('raw_ws.jsonl', 'raw_rest.jsonl')
+
+
 class SessionFiles:
-    """Append-only ``.part`` files of a running capture."""
+    """Append-only ``.part`` files of a running capture.
+
+    The raw evidence files are unbuffered: every received message reaches the operating system when it is
+    appended, before anything derived from it is written (events and clock samples are buffered and come later), so
+    a killed process never leaves an event on disk without its raw message. ``sync`` makes the raw files durable
+    first for the same reason."""
 
     def __init__(self, directory):
         self.dir = Path(directory)
@@ -212,17 +220,21 @@ class SessionFiles:
         self.lines = Counter()
         try:
             for name in DATA_FILES:
-                self.handles[name] = open(self.dir / f'{name}.part', 'xb')
+                self.handles[name] = open(self.dir / f'{name}.part', 'xb', buffering=0 if name in RAW_FILES else -1)
         except BaseException:
             self.close()
             raise
 
     def append(self, name, obj):
-        self.handles[name].write((canonical(obj) + '\n').encode('utf-8'))
+        data = memoryview((canonical(obj) + '\n').encode('utf-8'))
+        handle = self.handles[name]
+        while data:   # an unbuffered write may be partial
+            data = data[handle.write(data):]
         self.lines[name] += 1
 
     def sync(self):
-        for handle in self.handles.values():
+        for name in RAW_FILES + tuple(n for n in DATA_FILES if n not in RAW_FILES):
+            handle = self.handles[name]
             if not handle.closed:
                 handle.flush()
                 os.fsync(handle.fileno())
