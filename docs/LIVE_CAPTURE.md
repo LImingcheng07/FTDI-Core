@@ -96,7 +96,8 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
   retried). At the final clock sample it turns `MAX_EVENTS` / `MAX_SECONDS` / `INTERRUPTED` into `RATE_LIMITED`;
   after any other stop the first cause stays and `stop_detail` notes the rate limit. Other HTTP errors on aggTrades: retried like an empty page. A 200
   aggTrades response whose body is larger than `max_rest_body_bytes` or not UTF-8 → `FORMAT_ERROR` (the received
-  bytes are kept, base64, in `body_base64`).
+  bytes are kept, base64, in `body_base64`). A body shorter than its Content-Length (the connection ended early) is a
+  transport error (`IncompleteRead`, since v0.4.2: on Linux `http.client` would otherwise return it silently).
 * Stop reasons: `MAX_EVENTS` (exactly `max_events` written), `MAX_SECONDS`, `INTERRUPTED`
   (KeyboardInterrupt), `GAP_BLOCKED`, `HALTED_CONFLICT`, `FORMAT_ERROR` (invalid WS message, invalid REST body or
   page, binary or oversized message), `READER_OVERFLOW`, `PENDING_OVERFLOW`, `RATE_LIMITED`,
@@ -129,7 +130,9 @@ exists). While capturing, files carry the suffix `.part`; sealing renames them. 
 | `CAPTURE_START.json` | — | written when the session starts: `schema` (`FTDI-Live-Capture-Start-v1`), `symbol`, `lane`, `started_utc`, `software_version`, `endpoints`, `public_network`, `limits`, `max_events`, `max_seconds`, `previous` (as in the manifest), and since v0.4.1 `clocks` (`{wall, interval}`: `implementation` (1-200 characters), `resolution_ns` (integer 1..10^9)); v0.4.0 sessions without `clocks` remain valid. Since v0.4.1 every integer of the evidence files and of venue messages (stamps, counters, ids, `E`, `T`) must be in 0..2^63−1 |
 | `SESSION_MANIFEST.json` | — | below; written last, atomically |
 
-Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing.
+Files are flushed and `fsync`ed every `limits.fsync_every` events and at sealing, raw files first. Since v0.4.2
+the raw files (`raw_ws`, `raw_rest`) are unbuffered: each received message reaches the operating system when it is
+appended, before any event derived from it, so a killed process never leaves an event without its raw message.
 
 `SESSION_MANIFEST.json` (`schema: "FTDI-Live-Session-v1"`): `session_id` (directory name), `symbol`, `lane`
 (the 4 scope fields), `software_version`, `started_utc`, `sealed_utc`, `sealed_by` (`capture`/`recovery`),
@@ -188,6 +191,7 @@ with `verify_session` itself (a uniquely named directory created with `mkdtemp`,
 ```
 python -m ftdi_core live-capture --symbol BTCUSDT --capture-dir DIR (--public-network | --ws-url URL --rest-url URL)
                                 [--max-events N] [--max-seconds S] [--previous-session DIR]
+                                [--clock-interval-s S]   # since v0.4.2; default 60, at least 1 with --public-network
 python -m ftdi_core verify-session --session DIR [--previous DIR]
 python -m ftdi_core seal-session --session DIR [--apply]
 ```

@@ -1,0 +1,126 @@
+{
+  "note": "Real-network capture on the owner's Linux cloud server (2026-11-09 15:14-15:24 +08:00), released FTDI-Core v0.4.1 package (SHA-256 0d9a551d...89277778) through the Python API with clock_interval_s=5; public read-only endpoints, no key, no order. Session copied to the owner's PC; no host address or path here.",
+  "host": {
+    "os": "Ubuntu 24.04.5 LTS (kernel 6.8, x86_64)",
+    "python": "3.12.3",
+    "cpus": 4,
+    "memory_mib": 3723,
+    "shared": "other services were running on the host (load average about 0.35)",
+    "time_sync": {
+      "daemon": "chrony",
+      "stratum": 3,
+      "leap": "Normal",
+      "system_time_vs_ntp_ms": 0.12,
+      "rms_offset_ms": 0.05,
+      "root_delay_ms": 2.5,
+      "root_dispersion_ms": 17.1,
+      "note": "chrony keeps the clock within about 0.1 ms of its NTP sources; the sources themselves are bounded by root delay/2 + root dispersion (about 18 ms) against UTC"
+    }
+  },
+  "session": {
+    "session_id": "session-20261109T071423Z",
+    "stop_reason": "MAX_SECONDS",
+    "first_seq": 4110331283,
+    "last_seq": 4110342152,
+    "event_count": 10870,
+    "counts": {
+      "ws_messages": 10870,
+      "ws_duplicates": 0,
+      "rest_pages": 0,
+      "rest_records": 0,
+      "rest_duplicates": 0,
+      "text_variants": 0,
+      "before_anchor": 0,
+      "connections": 1,
+      "reconnects": 0,
+      "clock_samples": 121,
+      "gaps_repaired": 0
+    },
+    "limits_clock_interval_s": 5.0,
+    "clocks": {
+      "interval": {
+        "implementation": "clock_gettime(CLOCK_MONOTONIC)",
+        "resolution_ns": 1
+      },
+      "wall": {
+        "implementation": "clock_gettime(CLOCK_REALTIME)",
+        "resolution_ns": 1
+      }
+    },
+    "verify_on_host": "VERIFIED",
+    "verify_issue_counts": {}
+  },
+  "clock_samples": {
+    "count": 121,
+    "rtt_ms": {
+      "min": 36.09,
+      "p10": 37.65,
+      "median": 55.81,
+      "max": 85.34
+    },
+    "below_38_ms": 16,
+    "venue_minus_host_ms": {
+      "min": -10.7,
+      "median": -1.1,
+      "max": 8.1
+    }
+  },
+  "pipeline_on_host": {
+    "compose_replay_lab_e2e": "10,870 sent, 10,870 acknowledged, 0 duplicates",
+    "audit_e2e_archive": "COMPLETE, 10,870 / 10,870 matched, no issue"
+  },
+  "latency_released_policy": {
+    "status": "ESTIMATED",
+    "samples": 10870,
+    "trusted": 1147,
+    "tag_counts": {
+      "OFFSET_UNCERTAIN": 8411,
+      "QUEUED_READ": 6162
+    },
+    "latency_percentiles": {
+      "p50_ms": 18.455,
+      "p95_ms": 19.708,
+      "p99_ms": 19.987
+    },
+    "max_included_uncertainty_ms": 20.0,
+    "clock_samples": 121,
+    "session_wall_clock": {
+      "implementation": "clock_gettime(CLOCK_REALTIME)",
+      "resolution_ms": 1e-06
+    },
+    "certified": false
+  },
+  "cross_check": {
+    "trusted_corrected_latency_ms": {
+      "p5": 17.63,
+      "p50": 18.46,
+      "p95": 19.71,
+      "p99": 19.99
+    },
+    "trusted_uncertainty_ms": {
+      "p0": 19.06,
+      "p50": 19.68,
+      "p100": 20.0
+    },
+    "unqueued_reads": 4708,
+    "unqueued_corrected_latency_ms_all": {
+      "p5": 17.66,
+      "p50": 18.55,
+      "p95": 19.69,
+      "p99": 20.04
+    },
+    "unqueued_raw_delta_ms_no_correction": {
+      "p5": 19.34,
+      "p50": 19.5,
+      "p95": 20.56,
+      "p99": 20.78
+    },
+    "venue_minus_server_ms_16_fastest_samples": {
+      "median": -1.1,
+      "half_rtt_ms_range": [
+        18.0,
+        18.9
+      ]
+    }
+  }
+}

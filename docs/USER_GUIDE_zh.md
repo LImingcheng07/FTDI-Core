@@ -1,4 +1,4 @@
-# FTDI-Core v0.4.1 使用手册
+# FTDI-Core v0.4.2 使用手册
 
 > 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
 > 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
@@ -8,16 +8,16 @@
 
 ## 1. 环境与安装
 
-- Windows 10/11，Python **3.10+**（只用标准库，无需安装任何依赖包）。
+- Windows 10/11 或 Linux（已在 Ubuntu 24.04 上验证），Python **3.10+**（只用标准库，无需安装任何依赖包）。
 - **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
-- 解压发布包 `FTDI-Core-v0.4.1-windows.zip`，在解压出的 `FTDI-Core-v0.4.1` 目录里打开 PowerShell。
+- 解压发布包 `FTDI-Core-v0.4.2-windows.zip`（Linux 同样适用），在解压出的 `FTDI-Core-v0.4.2` 目录里打开 PowerShell。
 
 一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
-python -m ftdi_core --version                  # ftdi-core 0.4.1
+python -m ftdi_core --version                  # ftdi-core 0.4.2
 ```
 
 ## 2. 一条完整的数据链路
@@ -180,6 +180,11 @@ python -m ftdi_core analyze-clock-evidence --session <段目录>
   仍无可信时延——到交易所的往返至少 43 ms，不确定度至少 22.5 ms，超过 20 ms 上限。见 `docs/REAL_LIVE_PILOT2_RESULTS.md`。
 - 第三次采集（每 5 秒一个时钟样本，121 个）：最快往返仍是 42.7 ms，说明这是本机到交易所的网络下限，多取样也无法
   达到 20 ms 的标准。仅作参考的推演：若把上限放宽到 25/30 ms，P50 约 40 ms（误差 ±25/±30 ms，未认证）。
+- 在您的 Linux 云服务器上采集（每 5 秒一个时钟样本）：121 个样本中有 16 个往返低于 38 ms，得到**第一个可信的时延估计**：
+  状态 ESTIMATED，1,147 条可信读数，P50 18.5 ms、P95 19.7 ms、P99 20.0 ms，每个值带最多 ±20 ms 的不确定度；
+  用已同步时钟独立核对得 P50 19.5 ms。未经认证。见 `docs/REAL_LIVE_REMOTE_RESULTS.md`。
+- 时钟样本间隔（v0.4.2 起）：`--clock-interval-s 5` 表示每 5 秒取一个样本（默认 60；连公网时至少 1）。
+  样本越多，越可能碰到一次很快的往返，不确定度就越小。
 
 ## 7. 时钟证据分析（Task 003）
 
@@ -223,9 +228,9 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 
 | 文档 | 内容 |
 |---|---|
-| `RELEASE_NOTES_v0.4.1.md`、`RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
+| `RELEASE_NOTES_v0.4.2.md`、`RELEASE_NOTES_v0.4.1.md`、`RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
 | `docs/RELEASE_GATES_V04.md`、`docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
-| `docs/LIVE_CAPTURE.md` / `docs/REAL_LIVE_PILOT_RESULTS.md` | 实时采集契约 / 真实网络试采结果 |
+| `docs/LIVE_CAPTURE.md` / `docs/REAL_LIVE_PILOT_RESULTS.md`、`docs/REAL_LIVE_PILOT2_RESULTS.md`、`docs/REAL_LIVE_REMOTE_RESULTS.md` | 实时采集契约 / 真实网络试采结果 |
 | `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |
 | `docs/ARCHIVE_E2E_AUDIT.md` / `docs/CONSUMER_RETENTION_V2.md` | 审计 / 压缩的精确契约 |
 | `docs/TASK003_TIME_PROVENANCE_DESIGN.md` | 时间溯源规则 |
