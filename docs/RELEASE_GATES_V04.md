@@ -105,3 +105,24 @@ Evidence: `examples/V041_LIVE_LOOPBACK_EVIDENCE.json` (commit `269ed0a`).
 
 A latency figure from the real network (needs a v0.4.1 capture with a synchronised local clock: the owner's
 decision); sustained real-network operation; everything listed as not proven for v0.4.0 and v0.3.
+
+## v0.4.2 (2026-11-09): Linux verified; first trusted latency estimate
+
+Release notes `RELEASE_NOTES_v0.4.2.md`. Gates L1–L9 and P1–P13 above still hold. Regressions:
+`tests/test_live_pilot_findings.py` p22–p24.
+
+| # | Gate | Evidence | Status |
+|---|---|---|---|
+| Q1 | A REST body shorter than its Content-Length is a transport error, never an answer (Linux returns it silently) | p22; `test_m3` passes on Linux (failed there before) | PASS |
+| Q2 | Raw evidence reaches the OS before anything derived from it (raw files unbuffered, synced first) | p24; the killed-capture test on Linux: 0 failures in 30 runs (before: 2 in 12) | PASS |
+| Q3 | `live-capture --clock-interval-s`; at least 1 s against the public venue (refused before any socket; a public session claiming less is INVALID) | p23; all six real sessions re-verified VERIFIED | PASS |
+| Q4 | Every change is necessary for its regression | 5 single-change reverts, all caught (worktree of `943cb8d`, bytecode caching off) | PASS |
+| Q5 | Linux | Ubuntu 24.04.5 LTS, Python 3.12.3: Core suite OK (4 Windows-only tests skip by design), frozen S07 45 OK; live loopback acceptance: 11/11 checks PASS; sessions 1..1000 VERIFIED, 1001..2000 VERIFIED, 2001..2500 VERIFIED; latency evidence of session 1 (loopback only) ESTIMATED, 189 of 960 trusted, P50 0.751 ms; ftdi-core 0.4.2, Python 3.12.3, SQLite 3.45.1; `examples/V042_LIVE_LOOPBACK_LINUX_EVIDENCE.json`; extracted release ZIP verified on Linux (recorded in tag `v0.4.2`) | PASS |
+| Q6 | Real network on Linux | owner's cloud server, released v0.4.1 package: 10,870 events, VERIFIED, compose → replay → lab-e2e → audit COMPLETE on Linux; latency `ESTIMATED` (1,147 trusted, P50 18.5 / P95 19.7 / P99 20.0 ms, each ± up to 20 ms), independent cross-check P50 19.5 ms with the NTP-disciplined clock (`docs/REAL_LIVE_REMOTE_RESULTS.md`, `examples/REAL_LIVE_REMOTE_EVIDENCE.json`) | PASS |
+| Q7 | No regression on Windows | full-day acceptance from commit `943cb8d` (clean tree): **ACCEPTANCE PASS**, 554,441 events, owner's ZIP read-only (SHA-256 unchanged), incl. `vacuum-db` 404.6 → 60.9 MiB; `examples/V042_ACCEPTANCE_EVIDENCE.json`; live loopback acceptance: 11/11 checks PASS; sessions 1..1000 VERIFIED, 1001..2000 VERIFIED, 2001..2500 VERIFIED; latency evidence of session 1 (loopback only) ESTIMATED, 574 of 960 trusted, P50 0.404 ms; ftdi-core 0.4.2, Python 3.11.9, SQLite 3.45.1; `examples/V042_LIVE_LOOPBACK_EVIDENCE.json` | PASS |
+| Q8 | Suites and package | Windows: Core 433 (1 skipped by design), frozen S07 45, `-W error::ResourceWarning`; extracted release ZIP verified on Windows and Linux (recorded in tag `v0.4.2`) | PASS |
+
+### Not proven (v0.4.2)
+
+A certified latency (the estimate carries up to ±20 ms, from one 10-minute capture on one host); sustained
+real-network operation; full-day historical acceptance on Linux (the owner's ZIP was not copied to the server).
