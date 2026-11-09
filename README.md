@@ -78,7 +78,9 @@ precondition error (`FTDI_CORE_FAIL_CLOSED: ...` on stderr).
   by REST): verified, composed, delivered and audited **COMPLETE**; no latency figure (clock evidence too weak; fixed
   in v0.4.1) — `docs/REAL_LIVE_PILOT_RESULTS.md`. Second pilot with v0.4.1 (5,560 events, 229 recovered by REST):
   audit **COMPLETE** without any notice, clock-sample round trips 43–81 ms, no clock-step artefact; still no trusted
-  latency (best uncertainty 22.5 ms, limit 20 ms) — `docs/REAL_LIVE_PILOT2_RESULTS.md`.
+  latency (best uncertainty 22.5 ms, limit 20 ms) — `docs/REAL_LIVE_PILOT2_RESULTS.md`. A third capture with a clock
+  sample every 5 s (4,683 events, audit COMPLETE) showed a round-trip floor of ≈ 43 ms from this machine: the 20 ms
+  limit cannot be met from here, whatever the sampling rate.
 
 All timings are local process times, **not** exchange-to-user latency. Source market data are not included.
 
@@ -95,7 +97,7 @@ All timings are local process times, **not** exchange-to-user latency. Source ma
 ## Not proven
 
 Authenticated or cross-host delivery; exactly-once for side effects outside the consumer DB; sustained live
-operation (two owner-approved real-network pilots of 12 and 13 minutes; otherwise tested against a simulated
+operation (three owner-approved real-network captures of 10–13 minutes; otherwise tested against a simulated
 venue on 127.0.0.1), trusted latency or P99; 24-hour uptime; power-loss, backup/restore; signatures or WORM storage for
 evidence; L2/L3 book reconstruction. `COMPLETE` covers the supplied local evidence for the observed range, not
 venue completeness before the first sequence. Strong audits assume a quiescent maintenance window.

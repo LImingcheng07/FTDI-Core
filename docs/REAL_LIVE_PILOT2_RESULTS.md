@@ -57,3 +57,46 @@ cannot be told apart from 0 ms or 80 ms at this uncertainty and must not be quot
   clock); out of scope for this research prototype.
 
 None of this is needed for the data path itself: capture, chain, delivery and audit were complete and verified.
+
+## Third capture: clock sample every 5 s (2026-11-09, owner-approved)
+
+Same released v0.4.1 code, started through the Python API with one non-default limit, `clock_interval_s=5` (the CLI
+has no option for it; the limit is recorded in the session). 600 s, public read-only endpoints. Data in
+`C:\ftdi\live3`, `C:\ftdi\live3_chain`, `C:\ftdi\live3_run`, `C:\ftdi\live3_consumer`; summary without paths
+`examples/REAL_LIVE_PILOT3_EVIDENCE.json`.
+
+| | Result |
+|---|---|
+| Capture | `MAX_SECONDS`, **4,683 events** `4110219777..4110224459`, contiguous, 0 gaps, 1 connection, **121 clock samples** |
+| `verify-session` | **VERIFIED** |
+| compose → replay → lab-e2e → `audit-e2e-archive` | 4,683 sent / acknowledged, 0 duplicates; audit **COMPLETE**, no issue |
+| Clock-sample round trips | 42.7–90.2 ms, median 63.8 ms; the seven fastest 42.7–45.9 ms; **none below 38 ms** |
+| Wall vs interval clock | level within **0.014 ms** over 600 s (no step, no outlier) |
+| Latency report (released policy, 20 ms limit) | `NO_TRUSTED_SAMPLES` (best uncertainty ≈ 22.4 ms) |
+
+Twelve times more samples did not produce a faster one: the round trip from this machine to the venue has a floor
+of about 43 ms (the network path), not occasional slowness. With the Cristian method the offset uncertainty cannot
+fall below about half of that plus 1 ms, i.e. ≈ 22.4 ms, above the 20 ms limit. **From this location the released
+policy cannot produce a trusted latency figure, whatever the sampling rate.**
+
+The Windows clock synchronised during the capture (w32tm: last successful sync 12:59:35, ≈ 539 s in; Leap indicator
+0 afterwards), but a stripchart against the same NTP server still showed the local clock ≈ 0.88 s behind after the
+capture, and the wall-minus-interval level did not change: the offset had not been corrected yet. This does not
+affect the estimate (a constant offset is what the clock samples measure), but a latency claim needs the
+correction applied (`w32tm /resync /force` as administrator) and, ideally, a capture after it.
+
+**What-if, for the owner's decision only** (`examples/REAL_LIVE_PILOT3_EVIDENCE.json`,
+`whatif_uncertainty_limit`; the released limit stays 20 ms and nothing here is certified):
+
+| Uncertainty limit | Status | Trusted reads (of 4,683) | P50 | P95 | P99 |
+|---|---|---:|---:|---:|---:|
+| 20 ms (released) | `NO_TRUSTED_SAMPLES` | 0 | — | — | — |
+| 25 ms | `ESTIMATED` | 904 | 39.7 ms | 42.4 ms | needs 1,000 trusted |
+| 30 ms | `ESTIMATED` | 1,850 | 39.9 ms | 42.8 ms | 48.9 ms |
+
+Each of these percentiles carries an uncertainty of up to the limit (±25 or ±30 ms): the true venue-to-local
+latency is consistent with roughly 15–65 ms. The figures say the delivery from the venue's event time to the read
+on this machine is of the order of tens of milliseconds, consistent with the ~43 ms network round trip; they do not
+resolve it more finely. Raising the limit would be a policy change (ADR-008) for the owner to decide; a tighter
+figure needs a host network-close to the venue or a better time source (e.g. PTP/GPS), not more sampling.
+

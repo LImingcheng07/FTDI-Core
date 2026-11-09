@@ -178,6 +178,8 @@ python -m ftdi_core analyze-clock-evidence --session <段目录>
   但没有时延数字；原因和 v0.4.1 的修正见 `docs/REAL_LIVE_PILOT_RESULTS.md`。
 - 2026-11-09 第二次试采（v0.4.1）：5,560 条，审计 COMPLETE 且无任何提示，时钟样本往返 43–81 ms，修正全部生效；
   仍无可信时延——到交易所的往返至少 43 ms，不确定度至少 22.5 ms，超过 20 ms 上限。见 `docs/REAL_LIVE_PILOT2_RESULTS.md`。
+- 第三次采集（每 5 秒一个时钟样本，121 个）：最快往返仍是 42.7 ms，说明这是本机到交易所的网络下限，多取样也无法
+  达到 20 ms 的标准。仅作参考的推演：若把上限放宽到 25/30 ms，P50 约 40 ms（误差 ±25/±30 ms，未认证）。
 
 ## 7. 时钟证据分析（Task 003）
 

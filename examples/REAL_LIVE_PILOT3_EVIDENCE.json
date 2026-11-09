@@ -1,0 +1,132 @@
+{
+  "note": "Third owner-approved real-network capture (2026-11-09 12:50-13:00 +08:00), released FTDI-Core v0.4.1 code (tag v0.4.1) through the Python API with one non-default limit, clock_interval_s=5 (CLI has no option for it); public read-only endpoints, no key, no order. Data stays in the owner's directory; no paths here.",
+  "session": {
+    "session_id": "session-20261109T045036Z",
+    "stop_reason": "MAX_SECONDS",
+    "first_seq": 4110219777,
+    "last_seq": 4110224459,
+    "event_count": 4683,
+    "counts": {
+      "ws_messages": 4683,
+      "ws_duplicates": 0,
+      "rest_pages": 0,
+      "rest_records": 0,
+      "rest_duplicates": 0,
+      "text_variants": 0,
+      "before_anchor": 0,
+      "connections": 1,
+      "reconnects": 0,
+      "clock_samples": 121,
+      "gaps_repaired": 0
+    },
+    "limits_clock_interval_s": 5.0,
+    "clocks": {
+      "interval": {
+        "implementation": "QueryPerformanceCounter()",
+        "resolution_ns": 100
+      },
+      "wall": {
+        "implementation": "GetSystemTimePreciseAsFileTime()",
+        "resolution_ns": 100
+      }
+    },
+    "verify": "VERIFIED",
+    "verify_issue_counts": {}
+  },
+  "clock_samples": {
+    "count": 121,
+    "rtt_ms": {
+      "min": 42.7,
+      "p10": 57.28,
+      "median": 63.83,
+      "max": 90.22
+    },
+    "lowest_rtt_ms": [
+      42.7,
+      42.7,
+      42.8,
+      44.5,
+      44.9,
+      45.5,
+      45.9,
+      56.3
+    ],
+    "below_38_ms": 0,
+    "wall_minus_interval_level_max_change_ms": 0.014,
+    "venue_minus_local_ms_first_last": [
+      849.0,
+      874.0
+    ]
+  },
+  "windows_time": {
+    "before": "Leap indicator 3 (not synchronised); w32tm stripchart ntp.aliyun.com: local about +0.85 s behind",
+    "during": "w32tm reports a successful sync at 12:59:35 +08:00 (about 539 s into the capture)",
+    "after": "Leap indicator 0, stratum 3, source ntp.aliyun.com; stripchart still +0.878 s (the offset had not been corrected yet); no wall-clock level change in the capture"
+  },
+  "delivery": {
+    "events_sent": 4683,
+    "acknowledged": 4683,
+    "remote_duplicates": 0
+  },
+  "audit": {
+    "status": "COMPLETE",
+    "issue_counts": {},
+    "matched": 4683,
+    "expected": 4683
+  },
+  "latency_released_policy": {
+    "status": "NO_TRUSTED_SAMPLES",
+    "samples": 4683,
+    "trusted": 0,
+    "tag_counts": {
+      "OFFSET_UNCERTAIN": 4683,
+      "QUEUED_READ": 2605
+    },
+    "latency_percentiles": {
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "clock_samples": 121,
+    "session_wall_clock": {
+      "implementation": "GetSystemTimePreciseAsFileTime()",
+      "resolution_ms": 0.0001
+    },
+    "certified": false
+  },
+  "whatif_uncertainty_limit": {
+    "note": "Read-only what-if: the released policy limit is 20 ms; other limits shown for the owner's decision only. Not certified.",
+    "by_limit_ms": {
+      "20.0": {
+        "status": "NO_TRUSTED_SAMPLES",
+        "trusted": 0,
+        "samples": 4683,
+        "latency_percentiles": {
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      },
+      "25.0": {
+        "status": "ESTIMATED",
+        "trusted": 904,
+        "samples": 4683,
+        "latency_percentiles": {
+          "p50_ms": 39.697,
+          "p95_ms": 42.385,
+          "p99_ms": "insufficient samples (need 1000 trusted)"
+        }
+      },
+      "30.0": {
+        "status": "ESTIMATED",
+        "trusted": 1850,
+        "samples": 4683,
+        "latency_percentiles": {
+          "p50_ms": 39.94,
+          "p95_ms": 42.774,
+          "p99_ms": 48.864
+        }
+      }
+    }
+  }
+}
