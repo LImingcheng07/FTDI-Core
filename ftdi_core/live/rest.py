@@ -100,6 +100,10 @@ class RestClient:
             status = response.status
             retry_after = response.getheader('Retry-After')
             data = response.read(self.max_body_bytes + 1)
+            if len(data) <= self.max_body_bytes and response.length:
+                # fewer bytes than Content-Length: the connection ended early (EOF on Linux, where http.client
+                # returns the partial body instead of raising); not an answer
+                raise http.client.IncompleteRead(data, response.length)
             if len(data) > self.max_body_bytes:
                 body_base64 = base64.b64encode(data[:self.max_body_bytes]).decode('ascii')
                 error = f'body exceeds {self.max_body_bytes} bytes (first {self.max_body_bytes} kept as base64)'

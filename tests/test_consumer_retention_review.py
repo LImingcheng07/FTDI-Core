@@ -22,6 +22,14 @@ from ftdi_core.adapters.s070041.external_delivery import envelope, event_identit
 from ftdi_core.archive_e2e import ArchiveLimits, reconcile_archive_aware
 
 
+
+def _remove_directory_link(link):
+    """Remove a directory junction (Windows: rmdir) or symlink (POSIX: unlink) without touching its target."""
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.lexists(link):
+        os.rmdir(link)
+
 class RetentionReviewRegressionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='retention_review_')
@@ -114,7 +122,7 @@ class RetentionReviewRegressionTests(unittest.TestCase):
                 self.skipTest('cannot create junction')
         else:
             os.symlink(target, link, target_is_directory=True)
-        self.addCleanup(lambda: os.path.lexists(link) and os.rmdir(link))
+        self.addCleanup(_remove_directory_link, link)
 
     def test_r3_redirected_lane_directory_refused_by_compaction(self):
         lane, _ = self.prepared()

@@ -633,6 +633,32 @@ class PilotFindingTests(unittest.TestCase):
         self.assertTrue(evidence.trusted, evidence.tags)
         self.assertAlmostEqual(evidence.latency_ms, 40.0, delta=1.5)
 
+    def test_p22_a_body_cut_short_by_the_connection_is_not_an_answer(self):
+        """First run on Linux: there a shut-down or closed socket ends the body read with EOF and http.client returns
+        the partial body (Windows raised ConnectionAbortedError). An orderly close after part of the announced body
+        gives the same EOF on every platform."""
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+
+        def serve():
+            conn, _ = listener.accept()
+            with conn:
+                conn.recv(4096)
+                conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n'
+                             b'Connection: close\r\n\r\n[{"a":1}]')
+        server = threading.Thread(target=serve, daemon=True)
+        server.start()
+        records = []
+        client = RestClient(Endpoint('http', '127.0.0.1', listener.getsockname()[1]), symbol='BTCUSDT',
+                            recorder=records.append, min_interval_s=0, max_body_bytes=4096)
+        status, body, _ = client.agg_trades(1, 10, budget_s=2.0)
+        server.join(2)
+        self.assertIsNone(body, 'a truncated body must not be used')
+        self.assertIsNone(records[0]['body'])
+        self.assertIn('IncompleteRead', records[0]['error'])
+
 
 if __name__ == '__main__':
     unittest.main()

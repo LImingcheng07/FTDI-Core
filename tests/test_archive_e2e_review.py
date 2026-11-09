@@ -28,6 +28,14 @@ from ftdi_core.preparation import prepare_archive
 from test_archive_e2e import Fixture, NOTICE_CODES, PROJECT_ROOT, sql
 
 
+
+def _remove_directory_link(link):
+    """Remove a directory junction (Windows: rmdir) or symlink (POSIX: unlink) without touching its target."""
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.lexists(link):
+        os.rmdir(link)
+
 class ReviewRegressionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='archive_e2e_review_')
@@ -149,7 +157,7 @@ class ReviewRegressionTests(unittest.TestCase):
         external = self.f.base / 'external_archives'
         shutil.move(str(self.f.root / 'archives'), str(external))
         self._link_directory(self.f.root / 'archives', external)
-        self.addCleanup(lambda: os.path.lexists(self.f.root / 'archives') and os.rmdir(self.f.root / 'archives'))
+        self.addCleanup(_remove_directory_link, self.f.root / 'archives')
         segment_real = sorted((external / 'BTC').iterdir())[0]
         before = segment_real.read_bytes()
         for target in (segment_real, self.f.root / 'archives' / 'BTC' / 'report.json', external / 'report.json'):
