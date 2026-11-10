@@ -80,6 +80,41 @@ connection gets**, each with an uncertainty of up to ±20 ms. A capture that wan
 stream, check its delivery delay against the clock samples, and reconnect while it is slow; not implemented (an
 operational choice for the owner).
 
+
+## Path selection (2026-11-10, v0.4.3)
+
+**Experiment** (before the feature): 12 WebSocket connections in a row, 10 s each, delivery delay on the host's
+NTP-disciplined clock: 3 connections at **18.9–20.2 ms**, 9 at **35.2–38.7 ms**; within a connection the delay is
+steady (minimum and median within 0.2 ms); one server address gave the fast path once and the slow path twice.
+The path is a property of the connection.
+
+**Feature** (`docs/LIVE_CAPTURE.md` §3a, ADR-012): `--path-probes K --path-probe-s W` opens probe connections next to
+the active one (make-before-break), compares the delivery level of both over the same window and keeps the faster.
+
+**Validation on the real network** (`examples/REAL_LIVE_PATH_SELECTION_EVIDENCE.json`; clock sample every 5 s):
+
+| Run | Build | Length | Probes × window | Events | Connections | Switches | Kept level | REST | Reconnects | Verify |
+|---|---|---|---|---:|---:|---:|---|---:|---:|---|
+| 1 | dev | 600 s | 8 × 10 s | 4,737 | 9 | 0 | 19.1 ms (first connection already fast) | 0 | 0 | VERIFIED |
+| 2 | dev | 300 s | 8 × 10 s | 2,868 | 9 | 1 | 35.8 ms (no fast connection among 9) | 0 | 0 | VERIFIED |
+| 3 | dev | 300 s | 16 × 8 s | 1,909 | 15 | 1 | **35.0 → 19.6 ms** | 0 | 1 | VERIFIED |
+| 4 | v0.4.3 | 300 s | 16 × 8 s | 2,117 | 16 | 1 | **35.2 → 18.9 ms** | 0 | 0 | VERIFIED |
+
+* No run needed REST or lost a trade: the overlap delivered trades twice (391, 918, 722 and 783
+  identical duplicates), all sessions VERIFIED. The run-3 reconnect was the first connection's set-up (unchanged
+  behaviour), not path selection.
+* The per-connection levels that `analyze-clock-evidence` re-derives from the raw evidence equal the levels the
+  capture decided on (run 4: 35.2, 37.4, 36.1, 36.7, 35.3, 36.7, 35.3, 18.9, 36.4, 18.9, 36.9, 35.0, 37.7, 19.1, 35.2, 37.3 ms).
+* Over all runs and the experiment, 13 of 61 connections were fast (≈ 21 %): run 2 had none among 9 (≈ 12 % at that
+  rate). Path selection can only keep a fast path it finds; more probes make finding one more likely.
+* **Run 3 found a defect, fixed in v0.4.3:** two probe set-ups hung until their 30 s timeout inside the writer
+  thread; for 30 s no clock sample was taken and reads queued up (depth 479; largest clock-sample gap 34.4 s). Data
+  was never at risk, but the latency evidence of that time was lost. Probes now connect in the background, bounded
+  by one window. Run 4 had a failed probe set-up too, without effect: largest gap 5.2 s (the interval), maximum
+  queue depth 48 (ordinary bursts).
+* Latency reports (released policy): run 1 P50 18.2 ms, run 4 P50 18.2 ms on the kept fast path (82 trusted reads in
+  5 minutes; P95/P99 need more); each value ± up to 20 ms, not certified.
+
 ## Found on the way: first run on Linux
 
 The first test run on Linux (before this capture) found two defects that never showed on Windows; both are fixed in

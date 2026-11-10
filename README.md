@@ -1,4 +1,4 @@
-# FTDI-Core v0.4.2 — auditable local market-data delivery
+# FTDI-Core v0.4.3 — auditable local market-data delivery
 
 **Status:** local research prototype; **not** production certified and **not** a trading program. No API keys,
 no account or trading operations; delivery over localhost HTTP only; the only outbound connections are the
@@ -6,18 +6,18 @@ read-only public market-data hosts of `live-capture --public-network`. Python 3.
 Verified on Windows 11 and Ubuntu 24.04.
 
 **Chinese user guide (中文使用手册): [`docs/USER_GUIDE_zh.md`](docs/USER_GUIDE_zh.md)** · Release notes:
-[`RELEASE_NOTES_v0.4.2.md`](RELEASE_NOTES_v0.4.2.md) (earlier: `RELEASE_NOTES_v0.4.1.md`, `RELEASE_NOTES_v0.4.0.md`, `RELEASE_NOTES_v0.3.1.md`, `RELEASE_NOTES_v0.3.0.md`) · Gates and evidence: [`docs/RELEASE_GATES_V04.md`](docs/RELEASE_GATES_V04.md), [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
+[`RELEASE_NOTES_v0.4.3.md`](RELEASE_NOTES_v0.4.3.md) (earlier: `RELEASE_NOTES_v0.4.2.md`, `RELEASE_NOTES_v0.4.1.md`, `RELEASE_NOTES_v0.4.0.md`, `RELEASE_NOTES_v0.3.1.md`, `RELEASE_NOTES_v0.3.0.md`) · Gates and evidence: [`docs/RELEASE_GATES_V04.md`](docs/RELEASE_GATES_V04.md), [`docs/RELEASE_GATES_V03.md`](docs/RELEASE_GATES_V03.md)
 
 FTDI-Core turns a verified historical Binance aggTrades ZIP into an immutable event stream, persists it per lane
 with transactional checkpoints, delivers it at-least-once to an **independent consumer process** that commits
 before acknowledging, and proves per event — not by counts — that nothing was lost, duplicated or altered, even
 after both sides have archived or compacted their history.
 
-## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.4.2` folder)
+## Verify the package (PowerShell, inside the extracted `FTDI-Core-v0.4.3` folder)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 433 Core + 45 frozen S07 tests + CLI smoke
-python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.4.2.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1   # 441 Core + 45 frozen S07 tests + CLI smoke
+python scripts\Check-Release-Manifest.py                                          # every file vs release/PACKAGE_MANIFEST.v0.4.3.json
 ```
 
 ## Typical run
@@ -87,6 +87,8 @@ precondition error (`FTDI_CORE_FAIL_CLOSED: ...` on stderr).
   with the NTP-disciplined host clock gives P50 19.5 ms — `docs/REAL_LIVE_REMOTE_RESULTS.md`. Not certified. A
   one-hour capture there in the evening (54,438 events, audit COMPLETE): P50 35.4 ms (independent check
   36.56 ms), stable over the hour; the difference is the network path each connection gets.
+* **Path selection** (v0.4.3, `--path-probes`): probe connections opened next to the active one, the faster kept
+  without a gap; on the real network two runs switched from ≈ 35 ms to ≈ 19 ms — `docs/REAL_LIVE_REMOTE_RESULTS.md`.
 
 All timings are local process times, **not** exchange-to-user latency. Source market data are not included.
 

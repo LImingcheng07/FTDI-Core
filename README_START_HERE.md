@@ -1,6 +1,6 @@
 # FTDI + Claude Code / Windows development kit
 
-This folder is the **FTDI-Core v0.4.2 source tree** (released 2026-11-09), with `CLAUDE.md`, work orders and Windows scripts. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled. **End users: read `docs/USER_GUIDE_zh.md` (Chinese) and `README.md`.**
+This folder is the **FTDI-Core v0.4.3 source tree** (released 2026-11-10), with `CLAUDE.md`, work orders and Windows scripts. Python 3.10+; Core runtime/tests use the standard library. No market-data archive or API secrets are bundled. **End users: read `docs/USER_GUIDE_zh.md` (Chinese) and `README.md`.**
 
 ## Start in PowerShell (in this folder)
 
@@ -40,7 +40,7 @@ Respond in Chinese.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 ```
 
-Expected for v0.4.2: **433 Core (1 skipped by design on Windows; 4 Windows-only tests skip on Linux) + 45 frozen compatibility = 478 tests**, verified on native Windows 11 / Python 3.11.9 (`docs/RELEASE_GATES_V04.md`). The v0.2 baseline was 65 + 45. Verify the package files with `python scripts\Check-Release-Manifest.py`.
+Expected for v0.4.3: **441 Core (1 skipped by design on Windows; 4 Windows-only tests skip on Linux) + 45 frozen compatibility = 486 tests**, verified on native Windows 11 / Python 3.11.9 (`docs/RELEASE_GATES_V04.md`). The v0.2 baseline was 65 + 45. Verify the package files with `python scripts\Check-Release-Manifest.py`.
 
 ## Known limits
 

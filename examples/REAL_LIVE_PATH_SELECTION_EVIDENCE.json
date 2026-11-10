@@ -1,0 +1,932 @@
+{
+  "note": "Path selection on the owner's Linux cloud server, 2026-11-10; public read-only endpoints, no key, no order. Runs 1-3 used development build d3474cd (version string still 0.4.2), run 4 the fixed build 20d6e33 (0.4.3). Sessions stay on the server; no host address or path here.",
+  "experiment_12_connections": {
+    "same_address_both_levels": "one address gave 19.7 ms once and 35.6 / 38.7 ms twice (address withheld)",
+    "connections": [
+      {
+        "conn": 1,
+        "delay_median_ms": 20.2
+      },
+      {
+        "conn": 2,
+        "delay_median_ms": 36.3
+      },
+      {
+        "conn": 3,
+        "delay_median_ms": 35.7
+      },
+      {
+        "conn": 4,
+        "delay_median_ms": 37.5
+      },
+      {
+        "conn": 5,
+        "delay_median_ms": 35.2
+      },
+      {
+        "conn": 6,
+        "delay_median_ms": 36.0
+      },
+      {
+        "conn": 7,
+        "delay_median_ms": 19.7
+      },
+      {
+        "conn": 8,
+        "delay_median_ms": 35.6
+      },
+      {
+        "conn": 9,
+        "delay_median_ms": 18.9
+      },
+      {
+        "conn": 10,
+        "delay_median_ms": 35.3
+      },
+      {
+        "conn": 11,
+        "delay_median_ms": 36.3
+      },
+      {
+        "conn": 12,
+        "delay_median_ms": 38.7
+      }
+    ]
+  },
+  "runs": {
+    "live_path": {
+      "started": "2026-11-10 20:23:45 +0800",
+      "software_version": "0.4.2",
+      "max_seconds": 600.0,
+      "path_selection": {
+        "probes": 8,
+        "window_s": 10.0
+      },
+      "clock_interval_s": 5.0,
+      "stop_reason": "MAX_SECONDS",
+      "event_count": 4737,
+      "first_seq": 4111229189,
+      "last_seq": 4111233925,
+      "counts": {
+        "ws_messages": 5128,
+        "ws_duplicates": 391,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 9,
+        "reconnects": 0,
+        "clock_samples": 121,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "decisions": [
+        {
+          "probe": 2,
+          "active": 1,
+          "level_active_ms": 19.139,
+          "level_probe_ms": 18.6,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 3,
+          "active": 1,
+          "level_active_ms": 19.12,
+          "level_probe_ms": 35.927,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 4,
+          "active": 1,
+          "level_active_ms": 19.151,
+          "level_probe_ms": 35.239,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 5,
+          "active": 1,
+          "level_active_ms": 19.149,
+          "level_probe_ms": 37.71,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 6,
+          "active": 1,
+          "level_active_ms": 19.114,
+          "level_probe_ms": 35.1,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 7,
+          "active": 1,
+          "level_active_ms": 19.146,
+          "level_probe_ms": 35.881,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 8,
+          "active": 1,
+          "level_active_ms": 19.163,
+          "level_probe_ms": 19.649,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 9,
+          "active": 1,
+          "level_active_ms": 19.143,
+          "level_probe_ms": 18.753,
+          "kept": 1,
+          "outcome": "active kept"
+        }
+      ],
+      "kept": 1,
+      "switches": 0,
+      "failed_probe_connects": 0,
+      "connection_levels_from_raw_evidence": [
+        {
+          "conn": 1,
+          "delivery_level_ms_uncorrected": 19.145,
+          "messages": 4737,
+          "unqueued": 2174
+        },
+        {
+          "conn": 2,
+          "delivery_level_ms_uncorrected": 18.6,
+          "messages": 20,
+          "unqueued": 20
+        },
+        {
+          "conn": 3,
+          "delivery_level_ms_uncorrected": 35.927,
+          "messages": 91,
+          "unqueued": 35
+        },
+        {
+          "conn": 4,
+          "delivery_level_ms_uncorrected": 35.239,
+          "messages": 77,
+          "unqueued": 41
+        },
+        {
+          "conn": 5,
+          "delivery_level_ms_uncorrected": 37.71,
+          "messages": 35,
+          "unqueued": 13
+        },
+        {
+          "conn": 6,
+          "delivery_level_ms_uncorrected": 35.1,
+          "messages": 42,
+          "unqueued": 27
+        },
+        {
+          "conn": 7,
+          "delivery_level_ms_uncorrected": 35.881,
+          "messages": 18,
+          "unqueued": 18
+        },
+        {
+          "conn": 8,
+          "delivery_level_ms_uncorrected": 19.649,
+          "messages": 50,
+          "unqueued": 31
+        },
+        {
+          "conn": 9,
+          "delivery_level_ms_uncorrected": 18.753,
+          "messages": 58,
+          "unqueued": 32
+        }
+      ],
+      "latency": {
+        "status": "ESTIMATED",
+        "samples": 4737,
+        "trusted": 204,
+        "latency_percentiles": {
+          "p50_ms": 18.182,
+          "p95_ms": 19.611,
+          "p99_ms": "insufficient samples (need 1000 trusted)"
+        }
+      },
+      "max_queue_depth": 66,
+      "largest_clock_sample_gap_s": 5.1,
+      "build": "d3474cd"
+    },
+    "live_path2": {
+      "started": "2026-11-10 20:35:35 +0800",
+      "software_version": "0.4.2",
+      "max_seconds": 300.0,
+      "path_selection": {
+        "probes": 8,
+        "window_s": 10.0
+      },
+      "clock_interval_s": 5.0,
+      "stop_reason": "MAX_SECONDS",
+      "event_count": 2868,
+      "first_seq": 4111234841,
+      "last_seq": 4111237708,
+      "counts": {
+        "ws_messages": 3786,
+        "ws_duplicates": 918,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 9,
+        "reconnects": 0,
+        "clock_samples": 61,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "decisions": [
+        {
+          "probe": 2,
+          "active": 1,
+          "level_active_ms": 38.026,
+          "level_probe_ms": 36.006,
+          "kept": 2,
+          "outcome": "probe faster"
+        },
+        {
+          "probe": 3,
+          "active": 2,
+          "level_active_ms": 35.759,
+          "level_probe_ms": 34.995,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 4,
+          "active": 2,
+          "level_active_ms": 35.802,
+          "level_probe_ms": 34.847,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 5,
+          "active": 2,
+          "level_active_ms": 35.846,
+          "level_probe_ms": 35.654,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 6,
+          "active": 2,
+          "level_active_ms": 35.776,
+          "level_probe_ms": 34.785,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 7,
+          "active": 2,
+          "level_active_ms": 35.732,
+          "level_probe_ms": 35.031,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 8,
+          "active": 2,
+          "level_active_ms": 36.066,
+          "level_probe_ms": 35.453,
+          "kept": 2,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 9,
+          "active": 2,
+          "level_active_ms": 35.853,
+          "level_probe_ms": 35.577,
+          "kept": 2,
+          "outcome": "active kept"
+        }
+      ],
+      "kept": 2,
+      "switches": 1,
+      "failed_probe_connects": 0,
+      "connection_levels_from_raw_evidence": [
+        {
+          "conn": 1,
+          "delivery_level_ms_uncorrected": 38.09,
+          "messages": 210,
+          "unqueued": 90
+        },
+        {
+          "conn": 2,
+          "delivery_level_ms_uncorrected": 35.793,
+          "messages": 2757,
+          "unqueued": 1172
+        },
+        {
+          "conn": 3,
+          "delivery_level_ms_uncorrected": 34.995,
+          "messages": 150,
+          "unqueued": 52
+        },
+        {
+          "conn": 4,
+          "delivery_level_ms_uncorrected": 34.847,
+          "messages": 53,
+          "unqueued": 29
+        },
+        {
+          "conn": 5,
+          "delivery_level_ms_uncorrected": 35.654,
+          "messages": 122,
+          "unqueued": 51
+        },
+        {
+          "conn": 6,
+          "delivery_level_ms_uncorrected": 34.785,
+          "messages": 187,
+          "unqueued": 73
+        },
+        {
+          "conn": 7,
+          "delivery_level_ms_uncorrected": 35.031,
+          "messages": 223,
+          "unqueued": 58
+        },
+        {
+          "conn": 8,
+          "delivery_level_ms_uncorrected": 35.453,
+          "messages": 13,
+          "unqueued": 13
+        },
+        {
+          "conn": 9,
+          "delivery_level_ms_uncorrected": 35.577,
+          "messages": 71,
+          "unqueued": 32
+        }
+      ],
+      "latency": {
+        "status": "ESTIMATED",
+        "samples": 2868,
+        "trusted": 100,
+        "latency_percentiles": {
+          "p50_ms": 41.448,
+          "p95_ms": 59.28,
+          "p99_ms": "insufficient samples (need 1000 trusted)"
+        }
+      },
+      "max_queue_depth": 55,
+      "largest_clock_sample_gap_s": 5.1,
+      "build": "d3474cd"
+    },
+    "live_path3": {
+      "started": "2026-11-10 20:42:07 +0800",
+      "software_version": "0.4.2",
+      "max_seconds": 300.0,
+      "path_selection": {
+        "probes": 16,
+        "window_s": 8.0
+      },
+      "clock_interval_s": 5.0,
+      "stop_reason": "MAX_SECONDS",
+      "event_count": 1909,
+      "first_seq": 4111238572,
+      "last_seq": 4111240480,
+      "counts": {
+        "ws_messages": 2631,
+        "ws_duplicates": 722,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 15,
+        "reconnects": 1,
+        "clock_samples": 45,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "decisions": [
+        {
+          "probe": 2,
+          "active": 1,
+          "level_active_ms": 35.058,
+          "level_probe_ms": 35.663,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 3,
+          "active": 1,
+          "level_active_ms": 35.019,
+          "level_probe_ms": 37.99,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 4,
+          "active": 1,
+          "level_active_ms": 35.01,
+          "level_probe_ms": 19.608,
+          "kept": 4,
+          "outcome": "probe faster"
+        },
+        {
+          "probe": 5,
+          "active": 4,
+          "level_active_ms": 19.576,
+          "level_probe_ms": 35.662,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 6,
+          "active": 4,
+          "level_active_ms": 19.604,
+          "level_probe_ms": 35.438,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 7,
+          "active": 4,
+          "level_active_ms": 19.61,
+          "level_probe_ms": 35.483,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 8,
+          "active": 4,
+          "level_active_ms": 19.61,
+          "level_probe_ms": 18.884,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 9,
+          "active": 4,
+          "level_active_ms": 19.589,
+          "level_probe_ms": 37.427,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 10,
+          "active": 4,
+          "level_active_ms": 19.61,
+          "level_probe_ms": 35.778,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 11,
+          "active": 4,
+          "level_active_ms": 19.556,
+          "level_probe_ms": 35.261,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 12,
+          "active": 4,
+          "level_active_ms": 19.615,
+          "level_probe_ms": 36.463,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": null,
+          "active": 4,
+          "level_active_ms": null,
+          "level_probe_ms": null,
+          "kept": 4,
+          "outcome": "probe connect failed: connect failed: connection setup did not complete before the deadline"
+        },
+        {
+          "probe": null,
+          "active": 4,
+          "level_active_ms": null,
+          "level_probe_ms": null,
+          "kept": 4,
+          "outcome": "probe connect failed: connect failed: connection setup did not complete before the deadline"
+        },
+        {
+          "probe": 13,
+          "active": 4,
+          "level_active_ms": 19.605,
+          "level_probe_ms": 35.243,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 14,
+          "active": 4,
+          "level_active_ms": 19.668,
+          "level_probe_ms": 19.292,
+          "kept": 4,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 15,
+          "active": 4,
+          "level_active_ms": 19.715,
+          "level_probe_ms": 34.664,
+          "kept": 4,
+          "outcome": "active kept"
+        }
+      ],
+      "kept": 4,
+      "switches": 1,
+      "failed_probe_connects": 2,
+      "connection_levels_from_raw_evidence": [
+        {
+          "conn": 1,
+          "delivery_level_ms_uncorrected": 35.014,
+          "messages": 275,
+          "unqueued": 151
+        },
+        {
+          "conn": 2,
+          "delivery_level_ms_uncorrected": 35.663,
+          "messages": 39,
+          "unqueued": 31
+        },
+        {
+          "conn": 3,
+          "delivery_level_ms_uncorrected": 37.99,
+          "messages": 103,
+          "unqueued": 47
+        },
+        {
+          "conn": 4,
+          "delivery_level_ms_uncorrected": 19.592,
+          "messages": 1717,
+          "unqueued": 613
+        },
+        {
+          "conn": 5,
+          "delivery_level_ms_uncorrected": 35.662,
+          "messages": 21,
+          "unqueued": 21
+        },
+        {
+          "conn": 6,
+          "delivery_level_ms_uncorrected": 35.438,
+          "messages": 55,
+          "unqueued": 28
+        },
+        {
+          "conn": 7,
+          "delivery_level_ms_uncorrected": 35.483,
+          "messages": 44,
+          "unqueued": 21
+        },
+        {
+          "conn": 8,
+          "delivery_level_ms_uncorrected": 18.884,
+          "messages": 23,
+          "unqueued": 17
+        },
+        {
+          "conn": 9,
+          "delivery_level_ms_uncorrected": 37.427,
+          "messages": 34,
+          "unqueued": 20
+        },
+        {
+          "conn": 10,
+          "delivery_level_ms_uncorrected": 35.778,
+          "messages": 50,
+          "unqueued": 30
+        },
+        {
+          "conn": 11,
+          "delivery_level_ms_uncorrected": 35.261,
+          "messages": 93,
+          "unqueued": 39
+        },
+        {
+          "conn": 12,
+          "delivery_level_ms_uncorrected": 36.463,
+          "messages": 51,
+          "unqueued": 32
+        },
+        {
+          "conn": 13,
+          "delivery_level_ms_uncorrected": 35.243,
+          "messages": 71,
+          "unqueued": 31
+        },
+        {
+          "conn": 14,
+          "delivery_level_ms_uncorrected": 19.292,
+          "messages": 42,
+          "unqueued": 17
+        },
+        {
+          "conn": 15,
+          "delivery_level_ms_uncorrected": 34.664,
+          "messages": 13,
+          "unqueued": 13
+        }
+      ],
+      "latency": {
+        "status": "ESTIMATED",
+        "samples": 1909,
+        "trusted": 56,
+        "latency_percentiles": {
+          "p50_ms": 34.241,
+          "p95_ms": "insufficient samples (need 100 trusted)",
+          "p99_ms": "insufficient samples (need 1000 trusted)"
+        }
+      },
+      "max_queue_depth": 479,
+      "largest_clock_sample_gap_s": 34.4,
+      "build": "d3474cd"
+    },
+    "live_path4": {
+      "started": "2026-11-10 20:53:35 +0800",
+      "software_version": "0.4.3",
+      "max_seconds": 300.0,
+      "path_selection": {
+        "probes": 16,
+        "window_s": 8.0
+      },
+      "clock_interval_s": 5.0,
+      "stop_reason": "MAX_SECONDS",
+      "event_count": 2117,
+      "first_seq": 4111243162,
+      "last_seq": 4111245278,
+      "counts": {
+        "ws_messages": 2900,
+        "ws_duplicates": 783,
+        "rest_pages": 0,
+        "rest_records": 0,
+        "rest_duplicates": 0,
+        "text_variants": 0,
+        "before_anchor": 0,
+        "connections": 16,
+        "reconnects": 0,
+        "clock_samples": 61,
+        "gaps_repaired": 0
+      },
+      "verify": "VERIFIED",
+      "verify_issue_counts": {},
+      "decisions": [
+        {
+          "probe": 2,
+          "active": 1,
+          "level_active_ms": 35.199,
+          "level_probe_ms": 37.356,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 3,
+          "active": 1,
+          "level_active_ms": 35.168,
+          "level_probe_ms": 36.073,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 4,
+          "active": 1,
+          "level_active_ms": 35.184,
+          "level_probe_ms": 36.736,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 5,
+          "active": 1,
+          "level_active_ms": 35.209,
+          "level_probe_ms": 35.311,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 6,
+          "active": 1,
+          "level_active_ms": 35.201,
+          "level_probe_ms": 36.651,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 7,
+          "active": 1,
+          "level_active_ms": 35.117,
+          "level_probe_ms": 35.258,
+          "kept": 1,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 8,
+          "active": 1,
+          "level_active_ms": 35.16,
+          "level_probe_ms": 18.867,
+          "kept": 8,
+          "outcome": "probe faster"
+        },
+        {
+          "probe": 9,
+          "active": 8,
+          "level_active_ms": 18.863,
+          "level_probe_ms": 36.41,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 10,
+          "active": 8,
+          "level_active_ms": 18.932,
+          "level_probe_ms": 18.896,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 11,
+          "active": 8,
+          "level_active_ms": 18.909,
+          "level_probe_ms": 36.879,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 12,
+          "active": 8,
+          "level_active_ms": 18.872,
+          "level_probe_ms": 34.995,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 13,
+          "active": 8,
+          "level_active_ms": 18.888,
+          "level_probe_ms": 37.702,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 14,
+          "active": 8,
+          "level_active_ms": 18.888,
+          "level_probe_ms": 19.133,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 15,
+          "active": 8,
+          "level_active_ms": 18.903,
+          "level_probe_ms": 35.162,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": 16,
+          "active": 8,
+          "level_active_ms": 18.899,
+          "level_probe_ms": 37.295,
+          "kept": 8,
+          "outcome": "active kept"
+        },
+        {
+          "probe": null,
+          "active": 8,
+          "level_active_ms": null,
+          "level_probe_ms": null,
+          "kept": 8,
+          "outcome": "probe connect failed: ConnectionClosed: connect failed: connection setup did not complete before the deadline"
+        }
+      ],
+      "kept": 8,
+      "switches": 1,
+      "failed_probe_connects": 1,
+      "connection_levels_from_raw_evidence": [
+        {
+          "conn": 1,
+          "delivery_level_ms_uncorrected": 35.171,
+          "messages": 534,
+          "unqueued": 263
+        },
+        {
+          "conn": 2,
+          "delivery_level_ms_uncorrected": 37.356,
+          "messages": 20,
+          "unqueued": 20
+        },
+        {
+          "conn": 3,
+          "delivery_level_ms_uncorrected": 36.073,
+          "messages": 79,
+          "unqueued": 37
+        },
+        {
+          "conn": 4,
+          "delivery_level_ms_uncorrected": 36.736,
+          "messages": 77,
+          "unqueued": 40
+        },
+        {
+          "conn": 5,
+          "delivery_level_ms_uncorrected": 35.311,
+          "messages": 65,
+          "unqueued": 25
+        },
+        {
+          "conn": 6,
+          "delivery_level_ms_uncorrected": 36.651,
+          "messages": 27,
+          "unqueued": 26
+        },
+        {
+          "conn": 7,
+          "delivery_level_ms_uncorrected": 35.258,
+          "messages": 62,
+          "unqueued": 28
+        },
+        {
+          "conn": 8,
+          "delivery_level_ms_uncorrected": 18.893,
+          "messages": 1632,
+          "unqueued": 876
+        },
+        {
+          "conn": 9,
+          "delivery_level_ms_uncorrected": 36.41,
+          "messages": 76,
+          "unqueued": 50
+        },
+        {
+          "conn": 10,
+          "delivery_level_ms_uncorrected": 18.896,
+          "messages": 35,
+          "unqueued": 21
+        },
+        {
+          "conn": 11,
+          "delivery_level_ms_uncorrected": 36.879,
+          "messages": 34,
+          "unqueued": 21
+        },
+        {
+          "conn": 12,
+          "delivery_level_ms_uncorrected": 34.995,
+          "messages": 50,
+          "unqueued": 33
+        },
+        {
+          "conn": 13,
+          "delivery_level_ms_uncorrected": 37.702,
+          "messages": 21,
+          "unqueued": 21
+        },
+        {
+          "conn": 14,
+          "delivery_level_ms_uncorrected": 19.133,
+          "messages": 120,
+          "unqueued": 40
+        },
+        {
+          "conn": 15,
+          "delivery_level_ms_uncorrected": 35.162,
+          "messages": 43,
+          "unqueued": 21
+        },
+        {
+          "conn": 16,
+          "delivery_level_ms_uncorrected": 37.295,
+          "messages": 25,
+          "unqueued": 21
+        }
+      ],
+      "latency": {
+        "status": "ESTIMATED",
+        "samples": 2117,
+        "trusted": 82,
+        "latency_percentiles": {
+          "p50_ms": 18.194,
+          "p95_ms": "insufficient samples (need 100 trusted)",
+          "p99_ms": "insufficient samples (need 1000 trusted)"
+        }
+      },
+      "max_queue_depth": 48,
+      "largest_clock_sample_gap_s": 5.2,
+      "build": "20d6e33"
+    }
+  }
+}

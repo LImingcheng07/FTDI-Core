@@ -1,4 +1,4 @@
-# FTDI-Core v0.4.2 使用手册
+# FTDI-Core v0.4.3 使用手册
 
 > 本地运行的**行情数据可信性基础设施**（研究原型）：接收历史行情、按事件持久化、跨进程投递给独立的消费端，
 > 并能逐条事件审计"有没有丢、有没有重复、有没有被改"。
@@ -10,14 +10,14 @@
 
 - Windows 10/11 或 Linux（已在 Ubuntu 24.04 上验证），Python **3.10+**（只用标准库，无需安装任何依赖包）。
 - **把运行数据放在固态硬盘上**。机械硬盘会让投递慢约 6 倍（见 `docs/PERF_WINDOWS_DELIVERY.md`）。
-- 解压发布包 `FTDI-Core-v0.4.2-windows.zip`（Linux 同样适用），在解压出的 `FTDI-Core-v0.4.2` 目录里打开 PowerShell。
+- 解压发布包 `FTDI-Core-v0.4.3-windows.zip`（Linux 同样适用），在解压出的 `FTDI-Core-v0.4.3` 目录里打开 PowerShell。
 
 一键自检（全部测试 + 命令行冒烟，约 1 分钟）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify-FTDI.ps1
 python scripts\Check-Release-Manifest.py      # 校验发布包每个文件的 SHA-256
-python -m ftdi_core --version                  # ftdi-core 0.4.2
+python -m ftdi_core --version                  # ftdi-core 0.4.3
 ```
 
 ## 2. 一条完整的数据链路
@@ -187,6 +187,9 @@ python -m ftdi_core analyze-clock-evidence --session <段目录>
   整小时都很稳定。比下午慢约 17 ms 的原因是每条连接走的网络路径不同（实测有约 35/51/67 ms 三档），不是测量误差。
 - 时钟样本间隔（v0.4.2 起）：`--clock-interval-s 5` 表示每 5 秒取一个样本（默认 60；连公网时至少 1）。
   样本越多，越可能碰到一次很快的往返，不确定度就越小。
+- 选路（v0.4.3 起，默认关闭）：`--path-probes 16 --path-probe-s 8` 会在当前连接旁边再开试探连接，比较同一时段的
+  送达延迟，留下更快的那条。两条连接同时在收，不会产生缺口，也不需要 REST 补数。服务器上实测：每条连接要么约 19 ms、
+  要么约 36 ms，开启后两次从 35 ms 切到了 19 ms；但如果试探的连接里没有快的，也只能保持原速。
 
 ## 7. 时钟证据分析（Task 003）
 
@@ -230,7 +233,7 @@ python -m ftdi_core analyze-clock-evidence --pilot-db <实时试采的 capture.s
 
 | 文档 | 内容 |
 |---|---|
-| `RELEASE_NOTES_v0.4.2.md`、`RELEASE_NOTES_v0.4.1.md`、`RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
+| `RELEASE_NOTES_v0.4.3.md`、`RELEASE_NOTES_v0.4.2.md`、`RELEASE_NOTES_v0.4.1.md`、`RELEASE_NOTES_v0.4.0.md`、`RELEASE_NOTES_v0.3.1.md`、`RELEASE_NOTES_v0.3.0.md` | 版本变化 |
 | `docs/RELEASE_GATES_V04.md`、`docs/RELEASE_GATES_V03.md` | 发布门禁与证据 |
 | `docs/LIVE_CAPTURE.md` / `docs/REAL_LIVE_PILOT_RESULTS.md`、`docs/REAL_LIVE_PILOT2_RESULTS.md`、`docs/REAL_LIVE_REMOTE_RESULTS.md` | 实时采集契约 / 真实网络试采结果 |
 | `docs/ARCHITECTURE_V1_2.md` | v0.3 架构 |

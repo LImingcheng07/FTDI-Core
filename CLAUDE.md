@@ -1,13 +1,13 @@
 # FTDI-Core: instructions for Claude Code
 
-You are working on FTDI-Core v0.4.2 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
+You are working on FTDI-Core v0.4.3 (Python 3.10+, stdlib-only research prototype), not a trading bot or production-certified market-data platform. Communicate with the project owner in Chinese unless asked otherwise.
 
 **Governance (since 2026-11-06, see `FTDI_CLAUDE_CODE_HANDOFF.md`)**: Claude Code owns architecture, implementation, tests, refactoring and versioning decisions. Older steps that require approval from ChatGPT or a reviewer are superseded. The owner's explicit consent is still required for irreversible or high-risk actions: deleting real data/archives/consumer DBs, destructive schema migrations, `git push`/force/reset/history rewrites, credentials, accounts or trading. Work may be delegated to local agents (e.g. `codex exec`); verify delegated output before relying on it.
 
 ## First actions in every session
 1. Read README_START_HERE.md, docs/ARCHITECTURE_V1.md, docs/ARCHITECTURE_V1_1.md, docs/ARCHITECTURE_V1_2.md, docs/DATA_CONTRACT_V1.md, docs/RELEASE_GATES_V03.md and docs/RELEASE_GATES_V04.md.
 2. Run the **unmodified baseline** tests before implementation:
-   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 433 at v0.4.2, 1 skipped by design on Windows, 4 on Linux)
+   - `python -W error::ResourceWarning -m unittest discover -s tests -q` (65 at the v0.2 release; 441 at v0.4.3, 1 skipped by design on Windows, 4 on Linux)
    - From `reference_s07_0041/`: `python -W error::ResourceWarning -m unittest discover -s tests -q` (45 tests at release)
 3. Inspect `git status --short` if this is a Git repository. Never discard or overwrite the user's uncommitted changes.
 4. Work on a narrowly scoped task; define the contract and acceptance tests before nontrivial edits. A user-site package named `tests` exists on the owner's machine: run suites with `discover -s tests`, not `-m unittest tests.x`.
@@ -45,7 +45,10 @@ You are working on FTDI-Core v0.4.2 (Python 3.10+, stdlib-only research prototyp
 - `scripts/` Windows setup/verification and packaging
 
 ## Current state
-**v0.4.2 released 2026-11-09** (tags `v0.3.0`, `v0.3.1`, `v0.4.0`, `v0.4.1`, `v0.4.2`, local only). v0.4.2: Linux verified
+**v0.4.3 released 2026-11-10** (tags `v0.3.0` … `v0.4.3`, local only). v0.4.3: path selection (`--path-probes`,
+`docs/LIVE_CAPTURE.md` §3a, ADR-012; make-before-break probe connections, probes connect in the background; real-network
+validation in `docs/REAL_LIVE_REMOTE_RESULTS.md`); the live tests have a loopback-only guard in `tests/fakevenue.py`
+(never remove it: a broken refusal once let a test reach the public network). v0.4.2: Linux verified
 (Ubuntu 24.04 on the owner's cloud server: suites, live loopback acceptance, real-network capture with the first
 trusted latency estimate, `docs/REAL_LIVE_REMOTE_RESULTS.md`); fixes from the first Linux run (truncated REST body,
 raw files unbuffered); `live-capture --clock-interval-s`. The server's session copies are in `C:\ftdi\remote_tx106` and `C:\ftdi\remote_tx106_1h` (1-hour evening capture: P50 ≈ 35 ms vs ≈ 18.5 ms in the afternoon — per-connection network path)
