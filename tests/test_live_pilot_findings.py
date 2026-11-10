@@ -807,6 +807,34 @@ class PilotFindingTests(unittest.TestCase):
                 capture_session(self.base / 'pub', symbol='BTCUSDT', public_network=True, max_seconds=1.0,
                                 path_probes=2, path_probe_s=1.0)
 
+    def test_p32_a_slow_probe_connection_never_holds_up_the_capture(self):
+        """Real network (third path-selection run): two probe set-ups hung until their 30 s timeout inside the writer,
+        so clock samples stopped for 30 s and reads queued up (depth 479). Probes now connect in the background."""
+        from ftdi_core.live import wsclient
+        original = wsclient.WebSocket.connect.__func__
+        calls = []
+
+        def slow_second(cls, *args, **kw):
+            calls.append(threading.current_thread().name)
+            if len(calls) == 2:   # the probe: its set-up takes 1.5 s
+                time.sleep(1.5)
+            return original(cls, *args, **kw)
+        limits = CaptureLimits(gap_wait_ms=20, gap_timeout_s=1.0, rest_min_interval_s=0, clock_interval_s=0.25,
+                               ws_read_timeout_s=2.0, max_reconnects=1)
+        with FakeVenue(connections=[[('market', 5, 10 ** 6)], [('market', 5, 10 ** 6)]]) as venue:
+            with mock.patch.object(wsclient.WebSocket, 'connect', classmethod(slow_second)):
+                result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url,
+                                         rest_url=venue.rest_url, max_events=10 ** 6, max_seconds=3.5, limits=limits,
+                                         path_probes=1, path_probe_s=0.5)
+        session = Path(result['session_dir'])
+        reads = [json.loads(line) for line in (session / 'raw_ws.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertLess(max(r['queue_depth'] for r in reads), 20, 'the writer kept consuming during the set-up')
+        stamps = [json.loads(line)['t0_perf_ns'] for line in (session / 'clock.jsonl').read_text(encoding='utf-8')
+                  .splitlines()]
+        self.assertLess(max(b - a for a, b in zip(stamps, stamps[1:])) / 1e9, 1.0, 'clock samples went on')
+        self.assertEqual(result['path_selection']['decisions'][0]['probe'], 2)
+        self.assertEqual(calls[1], 'ftdi-probe-connect', 'the probe is set up outside the writer thread')
+
 
 if __name__ == '__main__':
     unittest.main()

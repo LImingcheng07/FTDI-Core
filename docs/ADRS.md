@@ -104,3 +104,25 @@ A second independent review of this design found 7 issues (foreign sidecars with
 **Consequence**: publication waits for sealing (session length is the latency of availability to the pipeline, not of capture). Two independent reviews (12 findings, then a verification pass) shaped the evidence rules. Real-network operation remains an owner decision; offline, the venue is simulated on 127.0.0.1 (`tests/fakevenue.py`).
 
 **ADR-008 amendment (v0.4.1, 2026-11-08)**: the real-network pilot showed that `time.time_ns()` on Windows (CPython < 3.13) is quantised to system-timer ticks; live capture takes wall stamps from `GetSystemTimePreciseAsFileTime()` and records the clocks used. Each read is checked against the wall-minus-interval level of the clock sample that corrects it (tolerance plus the drift bound over the time between them; the measured difference is added to the uncertainty); without interval stamps on the sample, `WALL_CLOCK_STEP` requires a lasting shift and a read that deviates without one is excluded alone (`READ_STAMP_OUTLIER`); a report without trusted samples is `NO_TRUSTED_SAMPLES`. A latency claim additionally needs a synchronised local clock (the pilot machine's was not: w32tm Leap indicator 3).
+
+## ADR-012 -- Path selection by delivery level, make-before-break (ACCEPTED, 2026-11-10)
+
+**Context**: on the owner's Linux cloud server the delivery delay of the public aggTrade stream was ≈ 19 ms on some
+WebSocket connections and ≈ 36 ms on others, constant for a connection's lifetime and independent of the server
+address (12-connection experiment: 3 fast; TCP connect times to every address fall into ≈ 35 / 51 / 67 ms levels).
+Which path a capture gets was luck.
+
+**Decision**: an opt-in path selection (`docs/LIVE_CAPTURE.md` §3a). A probe connection is opened next to the active
+one; after a window of overlap the faster delivery level (10th percentile of read time − venue event time of
+unqueued reads, same interval, offset-free) is kept and the other closed. Make-before-break, so selection never
+creates a gap, never needs REST, and cannot stop the capture; a failing probe is given up. Settings are recorded in
+`CAPTURE_START.json` only when enabled; the manifest schema is unchanged.
+
+**Rejected**: break-before-make reconnects (each probe would need REST catch-up and could end the capture with
+`GAP_BLOCKED`); an absolute threshold from the clock samples (the offset uncertainty, ≈ ±18 ms here, is as large as
+the difference to detect); choosing by server address (the experiment showed the path is per connection).
+
+**Consequence**: more connections and duplicate deliveries during probing (all recorded as evidence); the tests
+gained a loopback-only guard (`tests/fakevenue.py`) after a mutation check showed that a broken refusal could let a
+test reach the public network.
+

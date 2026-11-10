@@ -115,6 +115,31 @@ max_seconds=600.0, previous_session=None, limits=CaptureLimits()) -> dict`
 (≥ 0.1 in public mode; ≥ 0 in loopback mode), `max_reconnects=5`, `ws_read_timeout_s=30.0`,
 `max_message_bytes=1048576`, `max_rest_body_bytes=2097152`, `clock_interval_s=60.0`, `fsync_every=256`.
 
+## 3a. Path selection (since v0.4.3, off by default)
+
+Measured on a Linux cloud server: each WebSocket connection to the public stream keeps one network path for its
+lifetime, and the delivery delay (venue event time to read) differs between paths by about 17 ms (≈ 19 ms or
+≈ 36 ms; 3 of 12 test connections fast; same server address both ways — `docs/REAL_LIVE_REMOTE_RESULTS.md`).
+`capture_session(..., path_probes=K, path_probe_s=W)` / `live-capture --path-probes K --path-probe-s W`:
+
+* After the active connection has run for `W` seconds, a **probe** connection is opened **next to it** (both
+  readers feed the same queue; messages carry their connection id). Nothing is closed first: the trades the
+  connections deliver twice are identical duplicates for the sequencer, so there is no gap and no REST request.
+* After `W` seconds of overlap, the **delivery level** of both connections over that same interval is compared:
+  the 10th percentile of `read_wall_ns / 1e6 − E` of their unqueued reads (at least 5 each; with fewer the
+  comparison waits up to `3·W`). Both use the same local and venue clocks, so the comparison needs no offset
+  estimate. The probe is kept if it is faster by more than 1 ms, otherwise the active connection stays; the other
+  one is closed (its messages already received are still recorded as evidence).
+* The next probe starts at once, until `K` probes have been made. A probe that cannot connect or closes is given
+  up without affecting the capture; if the active connection closes while a probe streams, the probe takes over
+  (no reconnect, no REST). Failure reconnects (`max_reconnects`, REST catch-up) work as before; `reconnects` counts
+  only those, `connections` counts every connection.
+* Bounds: `K` from 0 to 20; `W` from 0.1 to 600 s, at least 2 s with `--public-network`; refused before any file or
+  socket. `CAPTURE_START.json` records `path_selection: {probes, window_s}` only when enabled (default sessions are
+  unchanged and stay readable by v0.4.1/v0.4.2). The decisions are returned by the capture (`path_selection` in its
+  result, not sealed: they follow from the raw evidence), and `analyze-clock-evidence --session` reports every
+  connection's delivery level (`connections`).
+
 ## 4. Session directory and files
 
 `<capture_dir>/<SYMBOL>/session-<UTC yyyymmddTHHMMSSZ>[-<k>]/` (a fresh directory; `-<k>` only if the name
@@ -192,6 +217,7 @@ with `verify_session` itself (a uniquely named directory created with `mkdtemp`,
 python -m ftdi_core live-capture --symbol BTCUSDT --capture-dir DIR (--public-network | --ws-url URL --rest-url URL)
                                 [--max-events N] [--max-seconds S] [--previous-session DIR]
                                 [--clock-interval-s S]   # since v0.4.2; default 60, at least 1 with --public-network
+                                [--path-probes K] [--path-probe-s W]   # since v0.4.3; §3a, default off
 python -m ftdi_core verify-session --session DIR [--previous DIR]
 python -m ftdi_core seal-session --session DIR [--apply]
 ```

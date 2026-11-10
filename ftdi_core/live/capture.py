@@ -74,6 +74,7 @@ class _Capture:
         self.path = {'left': path_probes, 'window_s': path_probe_s} if path_probes else None
         self.path_samples, self.path_log = {}, []
         self.path_mark = self.probe_started = None
+        self.probe_connecting = None   # (thread, result box) while a probe connection is being set up
         self.max_events, self.max_seconds = max_events, max_seconds
         self.previous_link, self.previous = previous
         self.files = SessionFiles(directory)
@@ -237,9 +238,10 @@ class _Capture:
         return WebSocket.connect(self.endpoints.ws, path, timeout=self.limits.ws_read_timeout_s,
                                  max_message=self.limits.max_message_bytes, deadline=self.deadline)
 
-    def _open(self, items, overflow, spill):
-        """Connect and start a reader for a new connection id (shared queue: messages carry their connection)."""
-        ws = self._connect(0)
+    def _open(self, items, overflow, spill, ws=None):
+        """Connect (unless ``ws`` is given) and start a reader for a new connection id (shared queue: messages carry
+        their connection)."""
+        ws = self._connect(0) if ws is None else ws
         self.counts['connections'] += 1
         conn = self.counts['connections']
         stop = threading.Event()
@@ -247,6 +249,31 @@ class _Capture:
         thread.start()
         self.readers[conn] = (ws, thread, stop)
         return conn
+
+    def _connect_in_background(self, deadline):
+        """Start setting up a probe connection (bounded by ``deadline``) in a thread; returns (thread, box)."""
+        box = {}
+
+        def connect():
+            try:
+                box['ws'] = WebSocket.connect(self.endpoints.ws, f'/ws/{self.symbol.lower()}@aggTrade',
+                                              timeout=self.limits.ws_read_timeout_s,
+                                              max_message=self.limits.max_message_bytes, deadline=deadline)
+            except Exception as exc:  # any failure only ends this probe
+                box['error'] = f'{type(exc).__name__}: {exc}'
+        thread = threading.Thread(target=connect, name='ftdi-probe-connect', daemon=True)
+        thread.start()
+        return thread, box
+
+    def _abandon_probe_connect(self):
+        """At the stop: wait for a probe set-up still running (bounded by its deadline) and close what it opened."""
+        if self.probe_connecting is None:
+            return
+        thread, box = self.probe_connecting
+        self.probe_connecting = None
+        thread.join(max(5.0, self.path['window_s'] + 5.0))
+        if 'ws' in box:
+            box['ws'].close()
 
     def _retire(self, conn):
         """Close a connection; its messages already queued are still recorded, its 'closed' notice is ignored."""
@@ -266,15 +293,23 @@ class _Capture:
         if p is None or self.active is None:
             return
         if self.probe is None:
-            if p['left'] <= 0 or now - self.path_mark < p['window_s']:
-                return
-            p['left'] -= 1
-            try:
-                self.probe = self._open(items, overflow, spill)
-            except (ConnectionClosed, WebSocketError) as exc:   # a failed probe is not a failure of the capture
-                self.path_log.append({'probe': None, 'active': self.active, 'kept': self.active,
-                                      'outcome': f'probe connect failed: {exc}'})
-                self.path_mark = now
+            if self.probe_connecting is not None:   # set up in the background: the writer never waits for it
+                thread, box = self.probe_connecting
+                if thread.is_alive():
+                    return
+                self.probe_connecting = None
+                if 'ws' not in box:   # a failed probe is not a failure of the capture
+                    self.path_log.append({'probe': None, 'active': self.active, 'kept': self.active,
+                                          'outcome': f'probe connect failed: {box.get("error")}'})
+                    self.path_mark = now
+                    return
+                self.probe = self._open(items, overflow, spill, ws=box['ws'])
+            else:
+                if p['left'] <= 0 or now - self.path_mark < p['window_s']:
+                    return
+                p['left'] -= 1
+                self.probe_connecting = self._connect_in_background(min(self.deadline,
+                                                                        now + max(2.0, p['window_s'])))
                 return
             self.probe_started = time.perf_counter_ns()
             self.path_samples[self.probe] = []
@@ -448,6 +483,7 @@ class _Capture:
         except KeyboardInterrupt:
             stop_reason, detail = 'INTERRUPTED', 'KeyboardInterrupt'
         finally:
+            self._abandon_probe_connect()
             for conn in list(self.readers):
                 self._retire(conn)
         self._drain(items, spill)
