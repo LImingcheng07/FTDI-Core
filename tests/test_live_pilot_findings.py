@@ -795,6 +795,18 @@ class PilotFindingTests(unittest.TestCase):
         result = json.loads(out.getvalue())
         self.assertEqual(result['path_selection']['kept'], 2, result['path_selection'])
 
+    def test_p31_no_test_can_reach_a_real_host(self):
+        """The mutation check of p29 showed that a broken refusal let a test start a real public capture (read-only,
+        stopped by the test timeout). The loopback guard in tests/fakevenue.py makes that impossible."""
+        from ftdi_core.live import netconnect
+        self.assertEqual(netconnect.connect.__name__, '_loopback_only')
+        with self.assertRaisesRegex(AssertionError, 'tests must stay on 127.0.0.1'):
+            netconnect.connect('data-api.binance.vision', 443, time.perf_counter() + 1)
+        with mock.patch('ftdi_core.live.capture.path_selection_problem', return_value=None):   # a broken check
+            with self.assertRaisesRegex(AssertionError, 'tests must stay on 127.0.0.1'):
+                capture_session(self.base / 'pub', symbol='BTCUSDT', public_network=True, max_seconds=1.0,
+                                path_probes=2, path_probe_s=1.0)
+
 
 if __name__ == '__main__':
     unittest.main()

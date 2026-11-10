@@ -42,7 +42,23 @@ import threading
 import time
 import urllib.parse
 
+from ftdi_core.live import netconnect as _netconnect
 from ftdi_core.live.clocks import wall_time_ns
+
+# Safety net for the whole live test suite (every live test imports this module): connection set-up to anything
+# but loopback fails at once, so even code whose refusal checks are broken (e.g. under a mutation check) can never
+# reach a real host from a test. Real-network captures are run outside the tests, with the owner's consent.
+_REAL_CONNECT = _netconnect.connect
+
+
+def _loopback_only(host, port, deadline):
+    if host not in ('127.0.0.1', 'localhost', '::1'):
+        raise AssertionError(f'a test tried to connect to {host}:{port}; tests must stay on 127.0.0.1')
+    return _REAL_CONNECT(host, port, deadline)
+
+
+if getattr(_netconnect.connect, '__name__', '') != '_loopback_only':
+    _netconnect.connect = _loopback_only
 
 
 def venue_now_ms():
