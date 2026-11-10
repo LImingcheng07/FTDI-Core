@@ -703,6 +703,98 @@ class PilotFindingTests(unittest.TestCase):
         finally:
             files.close()
 
+    # -- path selection (v0.4.3): the remote host's connections had ~19 ms or ~36 ms delivery, per connection --------
+    def _path_capture(self, scripts, probes, window_s=0.5, seconds=3.0):
+        from ftdi_core.live.latency import analyze_session
+        from ftdi_core.live.session import verify_session
+        with FakeVenue(connections=scripts) as venue:
+            result = capture_session(self.base / 'c', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                     max_events=1_000_000, max_seconds=seconds, limits=FAST, path_probes=probes,
+                                     path_probe_s=window_s)
+            requests = list(venue.requests)
+        session = Path(result['session_dir'])
+        self.assertEqual(result['stop_reason'], 'MAX_SECONDS', result['stop_detail'])
+        self.assertEqual(verify_session(session)['status'], 'VERIFIED')
+        events = [json.loads(line)['source_seq'] for line in (session / 'events.jsonl').read_text(encoding='utf-8')
+                  .splitlines()]
+        self.assertEqual(events, list(range(events[0], events[0] + len(events))), 'contiguous, nothing skipped')
+        self.assertFalse([r for r in requests if r[0] == '/api/v3/aggTrades'], 'no REST: the connections overlapped')
+        return result, analyze_session(session)
+
+    def test_p25_path_selection_keeps_the_faster_connection_without_a_gap(self):
+        result, report = self._path_capture([[('market', 40, 10 ** 6)], [('market', 5, 10 ** 6)]], probes=1)
+        decision = result['path_selection']['decisions'][0]
+        self.assertEqual((decision['active'], decision['probe'], decision['kept']), (1, 2, 2), decision)
+        self.assertGreater(decision['level_active_ms'] - decision['level_probe_ms'], 25)
+        self.assertEqual(result['counts']['connections'], 2)
+        self.assertEqual(result['counts']['reconnects'], 0)
+        self.assertGreater(result['counts']['ws_duplicates'], 0, 'the overlap delivered trades twice')
+        levels = {c['conn']: c['delivery_level_ms_uncorrected'] for c in report['connections']}
+        self.assertLess(abs(levels[1] - 40), 15)
+        self.assertLess(abs(levels[2] - 5), 15)
+
+    def test_p26_a_slower_probe_is_closed_and_the_active_kept(self):
+        result, _ = self._path_capture([[('market', 5, 10 ** 6)], [('market', 40, 10 ** 6)],
+                                        [('market', 40, 10 ** 6)]], probes=2, seconds=4.0)
+        decisions = result['path_selection']['decisions']
+        self.assertEqual([d['kept'] for d in decisions], [1, 1], decisions)
+        self.assertEqual(result['path_selection']['kept'], 1)
+        self.assertEqual(result['counts']['connections'], 3)
+
+    def test_p27_the_probe_takes_over_when_the_active_closes(self):
+        # the active closes 0.8 s in (market seq ~41), while the probe (opened after 0.5 s) streams
+        result, _ = self._path_capture([[('market', 30, 41), ('close',)], [('market', 30, 10 ** 6)]], probes=1)
+        decisions = result['path_selection']['decisions']
+        self.assertEqual(decisions[0]['outcome'][:28], 'active closed, probe took ov', decisions)
+        self.assertEqual(result['path_selection']['kept'], 2)
+        self.assertEqual(result['counts']['reconnects'], 0)
+
+    def test_p28_a_silent_probe_is_given_up_and_the_capture_goes_on(self):
+        result, _ = self._path_capture([[('market', 5, 10 ** 6)], []], probes=1, seconds=3.0)
+        decision = result['path_selection']['decisions'][0]
+        self.assertEqual((decision['kept'], decision['level_probe_ms']), (1, None), decision)
+        self.assertEqual(result['counts']['connections'], 2)
+
+    def test_p29_settings_are_recorded_bounded_and_absent_by_default(self):
+        from ftdi_core.live.session import START, start_problem
+        with FakeVenue(connections=[[('trades', 1, 5)]]) as venue:
+            plain = capture_session(self.base / 'plain', symbol='BTCUSDT', ws_url=venue.ws_url, rest_url=venue.rest_url,
+                                    max_events=5, max_seconds=10.0, limits=FAST)
+        start = json.loads((Path(plain['session_dir']) / START).read_text(encoding='utf-8'))
+        self.assertNotIn('path_selection', start, 'default sessions stay readable by v0.4.1/v0.4.2')
+        self.assertNotIn('path_selection', plain)
+        result, _ = self._path_capture([[('market', 5, 10 ** 6)], [('market', 5, 10 ** 6)]], probes=1)
+        start = json.loads((Path(result['session_dir']) / START).read_text(encoding='utf-8'))
+        self.assertEqual(start['path_selection'], {'probes': 1, 'window_s': 0.5})
+        self.assertIsNone(start_problem(start))
+        for bad in ({'probes': 0, 'window_s': 1.0}, {'probes': 21, 'window_s': 1.0}, {'probes': 1, 'window_s': 0.05},
+                    {'probes': True, 'window_s': 1.0}, {'probes': 1}, None):
+            self.assertIsNotNone(start_problem(dict(start, path_selection=bad)), bad)
+        self.assertIsNotNone(start_problem(dict(start, public_network=True,
+                                                endpoints={'ws': 'wss://data-stream.binance.vision',
+                                                           'rest': 'https://data-api.binance.vision'},
+                                                path_selection={'probes': 1, 'window_s': 1.0})))
+        for probes, window in ((21, 10.0), (-1, 10.0), (1, 0.05)):
+            with self.assertRaises(ValueError):
+                capture_session(self.base / 'bad', symbol='BTCUSDT', ws_url='ws://127.0.0.1:1',
+                                rest_url='http://127.0.0.1:1', path_probes=probes, path_probe_s=window)
+        with self.assertRaisesRegex(ValueError, 'public mode'):
+            capture_session(self.base / 'pub', symbol='BTCUSDT', public_network=True, path_probes=2, path_probe_s=1.0)
+        self.assertFalse((self.base / 'bad').exists() or (self.base / 'pub').exists(), 'refused before any file')
+
+    def test_p30_the_cli_enables_path_selection(self):
+        import contextlib
+        import io
+        from ftdi_core.cli import main
+        with FakeVenue(connections=[[('market', 30, 10 ** 6)], [('market', 3, 10 ** 6)]]) as venue:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = main(['live-capture', '--symbol', 'BTCUSDT', '--capture-dir', str(self.base / 'c'),
+                             '--ws-url', venue.ws_url, '--rest-url', venue.rest_url, '--max-events', '1000000',
+                             '--max-seconds', '2.5', '--path-probes', '1', '--path-probe-s', '0.5'])
+        self.assertEqual(code, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result['path_selection']['kept'], 2, result['path_selection'])
+
 
 if __name__ == '__main__':
     unittest.main()

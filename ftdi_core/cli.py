@@ -110,6 +110,11 @@ def main(argv=None) -> int:
     lc.add_argument('--clock-interval-s',type=float,default=60.0,
                     help='Seconds between server-time clock samples (default 60; at least 1 with --public-network). '
                          'More samples make a fast round trip, and so a small offset uncertainty, more likely')
+    lc.add_argument('--path-probes',type=int,default=0,
+                    help='Path selection: open this many probe connections (0..20) next to the active one and keep '
+                         'whichever delivers faster (no gap: the old connection closes only after the comparison)')
+    lc.add_argument('--path-probe-s',type=float,default=10.0,
+                    help='Seconds of overlap per probe (default 10; at least 2 with --public-network)')
     vs = sub.add_parser('verify-session',help='Read-only verification of a sealed live session')
     vs.add_argument('--session',type=Path,required=True)
     vs.add_argument('--previous',type=Path)
@@ -169,7 +174,8 @@ def main(argv=None) -> int:
             result = capture_session(args.capture_dir,symbol=args.symbol,ws_url=args.ws_url,rest_url=args.rest_url,
                                      public_network=args.public_network,max_events=args.max_events,
                                      max_seconds=args.max_seconds,previous_session=args.previous_session,
-                                     limits=CaptureLimits(clock_interval_s=args.clock_interval_s))
+                                     limits=CaptureLimits(clock_interval_s=args.clock_interval_s),
+                                     path_probes=args.path_probes,path_probe_s=args.path_probe_s)
             good = result['stop_reason'] in NORMAL_STOPS
         elif args.cmd == 'verify-session':
             result = verify_session(args.session,previous=args.previous)

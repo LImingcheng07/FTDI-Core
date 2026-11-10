@@ -33,6 +33,23 @@ class CaptureLimits:
 PUBLIC_MIN_CLOCK_INTERVAL_S = 1.0   # at most one server-time request per second against the public venue
 
 
+PATH_MAX_PROBES = 20               # probe connections per capture, at most
+PATH_PUBLIC_MIN_WINDOW_S = 2.0      # against the public venue a probe lasts at least this long
+PATH_MIN_SAMPLES = 5                # unqueued messages per connection needed to compare
+PATH_MARGIN_MS = 1.0                # a probe replaces the active connection only if faster by more than this
+
+
+def path_selection_problem(probes, window_s, public_network):
+    """None if (probes, window_s) are valid path-selection settings for that mode (probes 0 = off)."""
+    if type(probes) is not int or not 0 <= probes <= PATH_MAX_PROBES:
+        return f'path probes must be an integer from 0 to {PATH_MAX_PROBES}'
+    if type(window_s) not in (int, float) or not 0.1 <= window_s <= 600:
+        return 'path probe window must be from 0.1 to 600 seconds'
+    if public_network and probes and window_s < PATH_PUBLIC_MIN_WINDOW_S:
+        return f'path probe window below {PATH_PUBLIC_MIN_WINDOW_S} s in public mode'
+    return None
+
+
 def limits_problem(value, public_network):
     """None if ``value`` (a manifest/start ``limits`` dict) is a valid CaptureLimits for that mode."""
     if not isinstance(value, dict) or set(value) != {f.name for f in fields(CaptureLimits)}:

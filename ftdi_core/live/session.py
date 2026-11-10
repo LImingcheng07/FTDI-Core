@@ -17,7 +17,7 @@ from .. import __version__
 
 from .events import FormatError, bytes_records_lenient, canonical, check_event, check_symbol, compare, core_event, \
     lane, loads, parse_rest_page, parse_ws, rest_records_lenient, ws_record_lenient
-from .limits import limits_problem
+from .limits import limits_problem, path_selection_problem
 
 SCHEMA = 'FTDI-Live-Session-v1'
 START_SCHEMA = 'FTDI-Live-Capture-Start-v1'
@@ -40,7 +40,8 @@ MANIFEST_KEYS = frozenset({'schema', 'session_id', 'symbol', 'lane', 'software_v
                            'capture_start_sha256', 'interpreted'})
 START_KEYS = frozenset({'schema', 'symbol', 'lane', 'started_utc', 'software_version', 'endpoints', 'public_network',
                         'limits', 'max_events', 'max_seconds', 'previous'})
-START_OPTIONAL = frozenset({'clocks'})   # since v0.4.1: the wall and interval clocks the capture used
+START_OPTIONAL = frozenset({'clocks',            # since v0.4.1: the wall and interval clocks the capture used
+                            'path_selection'})   # since v0.4.3, only when enabled: {probes, window_s}
 
 
 def utc_compact():
@@ -382,6 +383,13 @@ def start_problem(start, m=None):
         return 'fields or schema'
     if 'clocks' in start and not _clocks_ok(start['clocks']):
         return 'clocks'
+    if 'path_selection' in start:
+        selection = start['path_selection']
+        if not isinstance(selection, dict) or set(selection) != {'probes', 'window_s'} or selection['probes'] == 0:
+            return 'path_selection'
+        problem = path_selection_problem(selection['probes'], selection['window_s'], start['public_network'] is True)
+        if problem:
+            return f'path_selection: {problem}'
     try:
         check_symbol(start['symbol'])
     except ValueError:

@@ -80,6 +80,20 @@ def analyze_session(session_dir, *, policy=TimePolicy()):
                                  read_perf_ns=record['read_perf_ns'], queue_depth_at_read=record['queue_depth']))
     if first is not None:
         rest_only = (last - first + 1) - len(seen)
+    connections = {}
+    for record in _lines(session / 'raw_ws.jsonl'):
+        try:
+            venue = parse_ws(record['text'], manifest['symbol'])
+        except FormatError:
+            continue
+        c = connections.setdefault(record['conn'], {'messages': 0, 'unqueued': []})
+        c['messages'] += 1
+        if record['queue_depth'] == 0:
+            c['unqueued'].append(record['read_wall_ns'] / 1e6 - venue['E'])
+    connection_levels = [{'conn': conn, 'messages': c['messages'], 'unqueued': len(c['unqueued']),
+                          'delivery_level_ms_uncorrected': (round(sorted(c['unqueued'])[len(c['unqueued']) // 10], 3)
+                                                            if c['unqueued'] else None)}
+                         for conn, c in sorted(connections.items())]
     resolution_ms, wall_clock = session_wall_resolution_ms(session)
     evidences = classify_events(events, nearest_estimator(samples, policy, resolution_ms), policy)
     result = percentile_report(evidences, policy)
@@ -88,6 +102,7 @@ def analyze_session(session_dir, *, policy=TimePolicy()):
                   events_first_delivered_by_ws=len(events), events_recovered_by_rest_only=rest_only,
                   clock_samples=len(samples), clocks=assess_clocks(policy),
                   session_wall_clock={'implementation': wall_clock, 'resolution_ms': resolution_ms},
+                  connections=connection_levels,
                   definition='latency = (read_wall + offset) - venue E, offset = venue clock minus local wall clock; '
                              'read time is taken immediately after '
                              'the WebSocket read in a reader thread that does not persist (queue depth recorded)')

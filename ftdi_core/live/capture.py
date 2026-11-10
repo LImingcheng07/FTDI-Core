@@ -11,7 +11,8 @@ from pathlib import Path
 from .. import __version__
 from .endpoints import resolve
 from .clocks import INTERVAL_CLOCK, WALL_CLOCK, stamp_pair
-from .limits import PUBLIC_MIN_CLOCK_INTERVAL_S, CaptureLimits
+from .limits import (PATH_MARGIN_MS, PATH_MIN_SAMPLES, PUBLIC_MIN_CLOCK_INTERVAL_S, CaptureLimits,
+                     path_selection_problem)
 from .events import FormatError, check_symbol, compare, core_event, lane, loads, parse_rest_page, parse_ws
 from .rest import RateLimited, RestClient, UnusableBody
 from .session import (MAX_INT64, START, START_SCHEMA, SessionFiles, create_session_dir, evidence_index, first_conflict,
@@ -63,8 +64,16 @@ def _reader(ws, items, overflow, stop, conn, spill):
 
 
 class _Capture:
-    def __init__(self, directory, *, symbol, endpoints, limits, max_events, max_seconds, previous):
+    def __init__(self, directory, *, symbol, endpoints, limits, max_events, max_seconds, previous,
+                 path_probes=0, path_probe_s=10.0):
         self.dir, self.symbol, self.endpoints, self.limits = directory, symbol, endpoints, limits
+        # connections: the active one, at most one probe (path selection), retired ones whose messages may still
+        # be queued (recorded as evidence like all others)
+        self.readers, self.retired = {}, set()
+        self.active = self.probe = None
+        self.path = {'left': path_probes, 'window_s': path_probe_s} if path_probes else None
+        self.path_samples, self.path_log = {}, []
+        self.path_mark = self.probe_started = None
         self.max_events, self.max_seconds = max_events, max_seconds
         self.previous_link, self.previous = previous
         self.files = SessionFiles(directory)
@@ -228,6 +237,70 @@ class _Capture:
         return WebSocket.connect(self.endpoints.ws, path, timeout=self.limits.ws_read_timeout_s,
                                  max_message=self.limits.max_message_bytes, deadline=self.deadline)
 
+    def _open(self, items, overflow, spill):
+        """Connect and start a reader for a new connection id (shared queue: messages carry their connection)."""
+        ws = self._connect(0)
+        self.counts['connections'] += 1
+        conn = self.counts['connections']
+        stop = threading.Event()
+        thread = threading.Thread(target=_reader, args=(ws, items, overflow, stop, conn, spill), daemon=True)
+        thread.start()
+        self.readers[conn] = (ws, thread, stop)
+        return conn
+
+    def _retire(self, conn):
+        """Close a connection; its messages already queued are still recorded, its 'closed' notice is ignored."""
+        ws, thread, stop = self.readers.pop(conn)
+        stop.set()
+        ws.close()
+        thread.join(10)
+        self.retired.add(conn)
+        self.path_samples.pop(conn, None)
+
+    def _path_step(self, items, overflow, spill, now):
+        """Path selection (docs/LIVE_CAPTURE.md §3a): after a window on the active connection, open a probe
+        connection next to it (make-before-break: no gap, no REST); after a window of overlap compare the delivery
+        level of both (10th percentile of read time minus venue event time, unqueued reads of the same interval,
+        offset-free because both use the same clocks) and close the slower one."""
+        p = self.path
+        if p is None or self.active is None:
+            return
+        if self.probe is None:
+            if p['left'] <= 0 or now - self.path_mark < p['window_s']:
+                return
+            p['left'] -= 1
+            try:
+                self.probe = self._open(items, overflow, spill)
+            except (ConnectionClosed, WebSocketError) as exc:   # a failed probe is not a failure of the capture
+                self.path_log.append({'probe': None, 'active': self.active, 'kept': self.active,
+                                      'outcome': f'probe connect failed: {exc}'})
+                self.path_mark = now
+                return
+            self.probe_started = time.perf_counter_ns()
+            self.path_samples[self.probe] = []
+            self.path_samples[self.active] = []   # compare both over the same interval
+            return
+        elapsed = (time.perf_counter_ns() - self.probe_started) / 1e9
+        if elapsed < p['window_s']:
+            return
+        a, b = self.path_samples.get(self.active, []), self.path_samples.get(self.probe, [])
+        if (len(a) < PATH_MIN_SAMPLES or len(b) < PATH_MIN_SAMPLES) and elapsed < 3 * p['window_s']:
+            return
+        level_a = _path_level(a) if len(a) >= PATH_MIN_SAMPLES else None
+        level_b = _path_level(b) if len(b) >= PATH_MIN_SAMPLES else None
+        keep_probe = level_b is not None and (level_a is None or level_b < level_a - PATH_MARGIN_MS)
+        entry = {'probe': self.probe, 'active': self.active, 'level_active_ms': level_a, 'level_probe_ms': level_b,
+                 'samples': [len(a), len(b)]}
+        loser = self.active if keep_probe else self.probe
+        if keep_probe:
+            self.active = self.probe
+        self.probe = None
+        entry.update(kept=self.active, outcome='probe faster' if keep_probe else 'active kept')
+        self.path_log.append(entry)
+        self._retire(loser)
+        self.path_samples[self.active] = []
+        self.path_mark = now - p['window_s']   # the active was just measured: the next probe may start at once
+
     def _backoff(self, k, deadline):
         delay = min(8.0, 0.5 * 2 ** k) * random.uniform(0.9, 1.1)
         end = min(time.perf_counter() + delay, deadline)
@@ -235,7 +308,9 @@ class _Capture:
             self._repair()
             time.sleep(min(0.05, max(0.0, end - time.perf_counter())))
 
-    def _consume(self, ws, items, overflow, deadline):
+    def _consume(self, items, overflow, spill, deadline):
+        """Process messages of all open connections until the active one closes without a probe to take over
+        (returns the reason) or the capture stops (_Stop)."""
         while True:
             now = time.perf_counter()
             if now >= deadline:
@@ -245,12 +320,30 @@ class _Capture:
             if self.last_clock is not None and now - self.last_clock >= self.limits.clock_interval_s:
                 self._clock_sample()
             self._repair()
+            self._path_step(items, overflow, spill, now)
             try:
                 item = items.get(timeout=0.05)
             except queue.Empty:
                 continue
-            kind = item[0]
+            kind, conn = item[0], item[1]
             if kind == 'closed':
+                if conn in self.retired:
+                    continue
+                if conn == self.probe:   # the probe ended on its own: keep the active
+                    self.path_log.append({'probe': conn, 'active': self.active, 'kept': self.active,
+                                          'outcome': f'probe closed: {item[2]}'})
+                    self.probe = None
+                    self._retire(conn)
+                    self.path_mark = now
+                    continue
+                if self.probe is not None:   # the active ended while a probe streams: the probe takes over
+                    self.path_log.append({'probe': self.probe, 'active': conn, 'kept': self.probe,
+                                          'outcome': f'active closed, probe took over: {item[2]}'})
+                    self.active, self.probe = self.probe, None
+                    self._retire(conn)
+                    self.path_samples[self.active] = []
+                    self.path_mark = now
+                    continue
                 return item[2]
             if kind == 'protocol':
                 raise _Stop('FORMAT_ERROR', item[2])
@@ -264,6 +357,8 @@ class _Capture:
             except FormatError as exc:
                 raise _Stop('FORMAT_ERROR', str(exc)) from None
             self._interpreted('raw_ws', self.ws_n - 1)
+            if self.path is not None and depth == 0 and conn in self.path_samples:
+                self.path_samples[conn].append(wall / 1e6 - record['E'])
             self._accept(record, 'ws')
 
     def _drain(self, items, spill):
@@ -314,9 +409,7 @@ class _Capture:
         started = time.perf_counter()
         deadline = self.deadline = started + self.max_seconds
         stop_reason, detail = None, ''
-        ws = reader = None
-        stop_reader = threading.Event()
-        items, spill = None, []
+        items, overflow, spill = queue.Queue(maxsize=self.limits.queue_size), threading.Event(), []
         try:
             self._clock_sample()
             attempt = 0
@@ -324,7 +417,7 @@ class _Capture:
                 if time.perf_counter() >= deadline:
                     raise _Stop('MAX_SECONDS')
                 try:
-                    ws = self._connect(attempt)
+                    self.active = self._open(items, overflow, spill)
                 except WebSocketError as exc:
                     raise _Stop('FORMAT_ERROR', f'handshake: {exc}') from None
                 except ConnectionClosed as exc:
@@ -334,19 +427,13 @@ class _Capture:
                     attempt += 1
                     self.counts['reconnects'] += 1
                     continue
-                self.counts['connections'] += 1
                 if self.counts['connections'] > 1 or self.previous_link:
                     self._request_catch_up()   # after the WS is connected: REST then covers up to its start
-                items, overflow = queue.Queue(maxsize=self.limits.queue_size), threading.Event()
-                stop_reader = threading.Event()
-                reader = threading.Thread(target=_reader, args=(ws, items, overflow, stop_reader,
-                                                                self.counts['connections'], spill), daemon=True)
-                reader.start()
-                reason = self._consume(ws, items, overflow, deadline)
-                stop_reader.set()
-                ws.close()
-                reader.join(10)
-                ws = reader = None
+                self.path_mark = time.perf_counter()
+                self.path_samples = {self.active: []} if self.path is not None else {}
+                reason = self._consume(items, overflow, spill, deadline)
+                self._retire(self.active)
+                self.active = None
                 if attempt >= self.limits.max_reconnects:
                     raise _Stop('CONNECTION_FAILED', reason)
                 self._backoff(attempt, deadline)
@@ -361,11 +448,8 @@ class _Capture:
         except KeyboardInterrupt:
             stop_reason, detail = 'INTERRUPTED', 'KeyboardInterrupt'
         finally:
-            stop_reader.set()
-            if ws is not None:
-                ws.close()
-            if reader is not None:
-                reader.join(10)
+            for conn in list(self.readers):
+                self._retire(conn)
         self._drain(items, spill)
         if stop_reason != 'RATE_LIMITED':
             try:
@@ -390,12 +474,24 @@ class _Capture:
             'counts': self.counts, 'endpoints': {'ws': self.endpoints.ws.base, 'rest': self.endpoints.rest.base},
             'public_network': self.endpoints.public, 'limits': asdict(self.limits),
             'interpreted': dict(self.interpreted)})
-        return {**manifest, 'session_dir': str(self.dir)}
+        result = {**manifest, 'session_dir': str(self.dir)}
+        if self.path is not None:   # not sealed: reproducible from raw_ws (connection ids, read times, venue E)
+            result['path_selection'] = {'decisions': self.path_log, 'kept': self.active}
+        return result
+
+
+def _path_level(delays):
+    """Delivery level of a connection: 10th percentile of read time minus venue event time (ms)."""
+    ordered = sorted(delays)
+    return round(ordered[len(ordered) // 10], 3)
 
 
 def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_network=False, max_events=10000,
-                    max_seconds=600.0, previous_session=None, limits=None):
-    """Capture public aggTrades into a new sealed session directory (docs/LIVE_CAPTURE.md)."""
+                    max_seconds=600.0, previous_session=None, limits=None, path_probes=0, path_probe_s=10.0):
+    """Capture public aggTrades into a new sealed session directory (docs/LIVE_CAPTURE.md).
+
+    ``path_probes`` > 0 enables path selection (§3a): that many probe connections, each compared with the active one
+    over ``path_probe_s`` seconds of overlap; the faster delivery path is kept."""
     check_symbol(symbol)
     limits = CaptureLimits() if limits is None else limits
     if not isinstance(limits, CaptureLimits):
@@ -409,6 +505,9 @@ def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_n
         raise ValueError('rest_min_interval_s must be at least 0.1 against the public venue')
     if endpoints.public and limits.clock_interval_s < PUBLIC_MIN_CLOCK_INTERVAL_S:
         raise ValueError(f'clock_interval_s must be at least {PUBLIC_MIN_CLOCK_INTERVAL_S} against the public venue')
+    problem = path_selection_problem(path_probes, path_probe_s, endpoints.public)
+    if problem:
+        raise ValueError(problem)
     link = previous = None
     if previous_session is not None:
         link, previous = previous_link(previous_session)
@@ -416,13 +515,17 @@ def capture_session(capture_dir, *, symbol, ws_url=None, rest_url=None, public_n
             raise ValueError('previous session has another symbol')
     directory = create_session_dir(capture_dir, symbol)
     started_utc = utc_iso()
-    write_new_json(Path(directory) / START, {
+    start = {
         'schema': START_SCHEMA, 'symbol': symbol, 'lane': lane(symbol), 'started_utc': started_utc,
         'software_version': __version__,
         'endpoints': {'ws': endpoints.ws.base, 'rest': endpoints.rest.base}, 'public_network': endpoints.public,
         'limits': asdict(limits), 'max_events': max_events, 'max_seconds': max_seconds, 'previous': link,
-        'clocks': {'wall': WALL_CLOCK, 'interval': INTERVAL_CLOCK}})
+        'clocks': {'wall': WALL_CLOCK, 'interval': INTERVAL_CLOCK}}
+    if path_probes:
+        start['path_selection'] = {'probes': path_probes, 'window_s': path_probe_s}
+    write_new_json(Path(directory) / START, start)
     capture = _Capture(directory, symbol=symbol, endpoints=endpoints, limits=limits, max_events=max_events,
-                       max_seconds=max_seconds, previous=(link, previous))
+                       max_seconds=max_seconds, previous=(link, previous), path_probes=path_probes,
+                       path_probe_s=path_probe_s)
     capture.started_utc = started_utc
     return capture.run()

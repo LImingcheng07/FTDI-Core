@@ -9,6 +9,9 @@ WebSocket (RFC 6455 server side, text frames, unmasked as servers must): connect
     ('trade', seq) | ('trades', first, last)      aggTrade frame(s) from ``trade(seq)``
     ('trade_with', seq, {field: value})           aggTrade frame with overridden / removed (value None) fields
     ('trade_now', seq)                            aggTrade frame whose venue time E is taken when it is sent
+    ('market', lag_ms, last)                      the shared market (``market=(first, interval_ms)``): every trade
+                                                  from the one due now, each sent ``lag_ms`` after its event time E,
+                                                  up to seq ``last`` (all connections see the same trades and E)
     ('text', str)                                 arbitrary text frame
     ('binary', bytes)                             binary frame
     ('fragmented', seq, parts)                    one aggTrade message split into ``parts`` frames
@@ -176,6 +179,21 @@ class _Connection:
                 record = trade(action[1], self.venue.symbol)
                 record['E'] = venue_now_ms() + self.venue.server_offset_ms
                 self.send(_frame(0x1, _compact(record).encode()))
+            elif kind == 'market':
+                lag_ms, last = action[1], action[2]
+                first, interval = self.venue.market
+                start = self.venue.market_start_ms
+                seq = max(first, first + -(-(venue_now_ms() - lag_ms - start) // interval))
+                while seq <= last and not self.venue.stopping.is_set() and not self.closed_by_client.is_set():
+                    event_ms = start + (seq - first) * interval
+                    wait = (event_ms + lag_ms - venue_now_ms()) / 1000
+                    if wait > 0:
+                        self.venue.stopping.wait(wait)
+                        continue
+                    record = trade(seq, self.venue.symbol)
+                    record['E'] = event_ms
+                    self.send(_frame(0x1, _compact(record).encode()))
+                    seq += 1
             elif kind == 'trade_with':
                 record = trade(action[1], self.venue.symbol)
                 for key, value in action[2].items():
@@ -238,12 +256,14 @@ class _Connection:
 
 class FakeVenue:
     def __init__(self, *, symbol='BTCUSDT', connections=(), rest_available=(0, -1), rest_overrides=None,
-                 rest_queue=(), server_offset_ms=0, bad_accept=False):
+                 rest_queue=(), server_offset_ms=0, bad_accept=False, market=(1, 20)):
         self.symbol = symbol
         self.connections = [list(script) for script in connections]
         self.rest_available = rest_available
         self.rest_overrides = dict(rest_overrides or {})
         self.rest_queue = list(rest_queue)
+        self.market = market
+        self.market_start_ms = None
         self.server_offset_ms = server_offset_ms
         self.bad_accept = bad_accept
         self.stopping = threading.Event()
@@ -323,6 +343,7 @@ class FakeVenue:
 
     # -- lifecycle -----------------------------------------------------------------------------
     def __enter__(self):
+        self.market_start_ms = venue_now_ms()
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.bind(('127.0.0.1', 0))
         self._listener.listen(8)
