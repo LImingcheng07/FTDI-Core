@@ -39,6 +39,12 @@ field `connections`. No change to the historical pipeline, delivery, consumer, r
 
 See `docs/RELEASE_GATES_V04.md`, section v0.4.3.
 
+## Historical pipeline
+
+Unchanged since v0.4.2 (byte-identical outside `ftdi_core/live` except the version string and two `live-capture`
+arguments). The full-day acceptance was not re-run for this version: the owner's original ZIP is no longer at its
+location. See gate R7.
+
 ## Not proven
 
 That a fast path exists at every time or on every host; a certified latency; sustained operation.

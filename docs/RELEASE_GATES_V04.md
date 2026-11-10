@@ -126,3 +126,24 @@ Release notes `RELEASE_NOTES_v0.4.2.md`. Gates L1–L9 and P1–P13 above still 
 
 A certified latency (the estimate carries up to ±20 ms, from one 10-minute capture on one host); sustained
 real-network operation; full-day historical acceptance on Linux (the owner's ZIP was not copied to the server).
+
+## v0.4.3 (2026-11-10): path selection
+
+Release notes `RELEASE_NOTES_v0.4.3.md`. Gates L1–L9, P1–P13 and Q1–Q8 above still hold. Regressions:
+`tests/test_live_pilot_findings.py` p25–p32.
+
+| # | Gate | Evidence | Status |
+|---|---|---|---|
+| R1 | Path selection keeps the faster connection without a gap or REST request, keeps the active when the probe is slower, lets a probe take over a closed active, gives up a silent probe, records its settings only when enabled and bounds them (public: window ≥ 2 s, at most 20 probes, refused before any file) | p25–p30 (simulated shared market, per-connection delivery lag); 5 repeated runs green | PASS |
+| R2 | A probe never holds up the capture (set-up in the background, bounded by one window) | p32: a 1.5 s probe set-up leaves queue depth < 20 and clock samples < 1 s apart (the blocking implementation: depth 74) | PASS |
+| R3 | No test can reach a real host | loopback-only guard in `tests/fakevenue.py`; p31; the two mutations that once let a test start a public capture now fail in 0.7–3.5 s with the guard's message | PASS |
+| R4 | Every change is necessary for its regression | 9 single-change reverts, all caught (worktree of `5ab05ab`, bytecode caching off), plus the p32 check against `d3474cd` | PASS |
+| R5 | Real network | 4 runs on the owner's Linux cloud server: all VERIFIED, 0 REST, no trade lost; two switched ≈ 35 → ≈ 19 ms, one kept a fast first connection, one found no fast connection among 9; run 3 exposed the blocking probe set-up (R2), run 4 confirmed the fix; per-connection levels re-derived from the raw evidence equal the capture's decisions (`docs/REAL_LIVE_REMOTE_RESULTS.md`, `examples/REAL_LIVE_PATH_SELECTION_EVIDENCE.json`) | PASS |
+| R6 | Live pipeline on 127.0.0.1 | Windows: 11/11 checks PASS (`examples/V043_LIVE_LOOPBACK_EVIDENCE.json`); Linux: 11/11 PASS (`examples/V043_LIVE_LOOPBACK_LINUX_EVIDENCE.json`); commit `fd28e09` | PASS |
+| R7 | Historical pipeline | **Full-day acceptance not re-run**: the owner's original ZIP is no longer at its location (2026-11-10; its folder is in the owner's Recycle Bin and was not touched). The historical pipeline is byte-identical to v0.4.2 (changes since v0.4.2 outside `ftdi_core/live`: the version string and two `live-capture` arguments), whose full-day acceptance passed (`examples/V042_ACCEPTANCE_EVIDENCE.json`); its tests pass in the suites below | PASS (by unchanged code) |
+| R8 | Suites and package | Windows: Core 441 (1 skipped by design), frozen S07 45; Linux: Core 441 (4 Windows-only skipped), S07 45; extracted release ZIP verified on Windows and Linux (recorded in tag `v0.4.3`) | PASS |
+
+### Not proven (v0.4.3)
+
+That a fast path exists at every time or on every host (run 2 found none among 9 connections); a certified latency;
+sustained operation; a full-day acceptance run of this version (R7).
